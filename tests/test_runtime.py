@@ -11,15 +11,18 @@ from raftchaos.messages import (
     AppendEntriesReply,
     ClientRequest,
     ClientResponse,
+    InstallSnapshot,
+    InstallSnapshotReply,
     LogEntry,
     PreVote,
     PreVoteReply,
     RequestVote,
     RequestVoteReply,
+    Snapshot,
 )
-from raftchaos.node import Role
+from raftchaos.node import RaftConfig, Role
 from raftchaos.runtime.client import KvClient, Unavailable, fetch_status
-from raftchaos.runtime.codec import decode, encode
+from raftchaos.runtime.codec import decode, encode, entry_to_json, snapshot_to_json
 from raftchaos.runtime.server import NodeServer
 from raftchaos.runtime.storage import FileStorage
 from raftchaos.runtime.verify import run_verify
@@ -40,6 +43,13 @@ entries = st.builds(
     st.integers(0, 10**6),
 )
 small = st.integers(0, 10**6)
+snapshots = st.builds(
+    Snapshot,
+    small,
+    small,
+    st.lists(st.tuples(st.text(max_size=4), scalars), max_size=4).map(tuple),
+    st.lists(st.tuples(st.text(min_size=1, max_size=4), small, scalars), max_size=3).map(tuple),
+)
 messages = st.one_of(
     st.builds(RequestVote, small, small, small, small),
     st.builds(RequestVoteReply, small, st.booleans()),
@@ -49,6 +59,8 @@ messages = st.one_of(
         AppendEntries, small, small, small, small, st.lists(entries, max_size=5).map(tuple), small
     ),
     st.builds(AppendEntriesReply, small, st.booleans(), small, small),
+    st.builds(InstallSnapshot, small, small, snapshots),
+    st.builds(InstallSnapshotReply, small, small),
     st.builds(ClientRequest, small, commands),
     st.builds(ClientResponse, small, st.booleans(), scalars, st.one_of(st.none(), small)),
 )
@@ -132,6 +144,45 @@ def test_torn_last_line_is_dropped_on_load(tmp_path):
     reloaded.state.log.append(entry(1, 3))
     reloaded.sync()
     assert FileStorage(base).state.log == [entry(1, 1), entry(1, 2), entry(1, 3)]
+
+
+def test_snapshot_compacts_the_files_and_reloads(tmp_path):
+    base = tmp_path / "n"
+    store = FileStorage(base)
+    store.state.log.extend(entry(1, i) for i in range(1, 11))
+    store.sync()
+    # what a node does when it compacts entries 1..6
+    store.state.snapshot = Snapshot(6, 1, (("k", 6),), (("c1", 6, 6),))
+    del store.state.log[:6]
+    assert store.sync() is True
+    assert store.log_path.read_text().count("\n") == 4  # only entries 7..10 are left
+    reloaded = FileStorage(base)
+    assert reloaded.state.snapshot == store.state.snapshot
+    assert reloaded.state.log == [entry(1, i) for i in range(7, 11)]
+    reloaded.state.log.append(entry(1, 11))
+    reloaded.sync()
+    assert FileStorage(base).state.log[-1] == entry(1, 11)
+
+
+def test_crash_between_snapshot_and_log_rewrite_is_harmless(tmp_path):
+    base = tmp_path / "n"
+    store = FileStorage(base)
+    store.state.log.extend(entry(1, i) for i in range(1, 11))
+    store.sync()
+    # The snapshot reached the disk, the log rewrite did not: the old full log is still there.
+    snap = Snapshot(6, 1, (("k", 6),), ())
+    store.snapshot_path.write_text(json.dumps(snapshot_to_json(snap)))
+    reloaded = FileStorage(base)
+    assert reloaded.state.snapshot == snap
+    assert reloaded.state.log == [entry(1, i) for i in range(7, 11)]
+
+
+def test_log_files_from_before_indexes_still_load(tmp_path):
+    base = tmp_path / "n"
+    FileStorage(base)  # creates the files
+    lines = [json.dumps(entry_to_json(entry(1, i))) for i in range(1, 4)]
+    (tmp_path / "n.log.jsonl").write_text("\n".join(lines) + "\n")
+    assert FileStorage(base).state.log == [entry(1, i) for i in range(1, 4)]
 
 
 # ---- a real cluster over localhost TCP -----------------------------------------------------
@@ -314,6 +365,37 @@ def test_late_commit_of_an_abandoned_put_does_not_answer_a_later_get(tmp_path):
                 await r.start()
             servers[:] = [leader, *reborn]
             assert await pending_get is None  # "other" was never written
+        finally:
+            await asyncio.gather(*(s.stop() for s in servers), return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_node_back_after_a_long_outage_catches_up_with_a_snapshot(tmp_path):
+    async def scenario():
+        config = RaftConfig(pre_vote=True, snapshot_every=5)
+        ports = free_ports(3)
+        addresses = {i: ("127.0.0.1", ports[i]) for i in range(3)}
+        servers = [NodeServer(i, addresses, tmp_path, config=config) for i in range(3)]
+        for s in servers:
+            await s.start()
+        try:
+            await wait_for(lambda: leader_of(servers) is not None)
+            leader = leader_of(servers)
+            away = next(s for s in servers if s is not leader)
+            await away.stop()
+            client = KvClient([addresses[leader.id]])
+            for i in range(30):
+                await client.put("k", i)
+            assert leader.node.snap_index >= 25  # the leader compacted past the absent node
+
+            back = NodeServer(away.id, addresses, tmp_path, config=config)
+            await back.start()
+            servers[servers.index(away)] = back
+            await wait_for(lambda: back.node.commit_index >= leader.node.commit_index)
+            assert back.node.snap_index > 0  # it was brought up to date by a snapshot
+            assert back.node.kv.data == leader.node.kv.data == {"k": 29}
+            assert back.storage.snapshot_path.exists()
         finally:
             await asyncio.gather(*(s.stop() for s in servers), return_exceptions=True)
 

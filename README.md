@@ -22,9 +22,13 @@ the exact same failure, every time.
 
 ## Results at a glance
 
-- **All 6 planted Raft bugs are found**, each with a seed that replays the failure. Random faults
-  find 4; targeted faults find the other 2 (double vote after a restart, and Figure 8 of the Raft paper).
-- **No false alarms:** a correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5.
+- **All 8 planted bugs are found** (6 in the protocol, 2 in snapshots), each with a seed that
+  replays the failure. Random faults find 6 within 1500 seeds; targeted faults find all 8, including
+  a double vote after a restart and Figure 8 of the Raft paper.
+- **No false alarms:** a correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5,
+  and 5000 more with snapshots turned on.
+- **Snapshots keep the log bounded:** after about 9,600 writes each node holds 56 KB on disk
+  instead of 840 KB, and a node back from a long outage catches up in 0.35 s instead of 0.93 s.
 - **Bugs in its own tooling:** the simulator caught two real defects in this project (duplicated
   requests applied twice, and a wrong assumption in the checker), written up [below](#bugs-the-simulator-found-in-this-project).
 - **Also works for real:** the same node runs over TCP. In Docker, with `kill -9`, `tc netem` and
@@ -53,7 +57,7 @@ starting elections (term 9) while nodes 1 and 2 elect a leader and keep committi
 `raftchaos viz` turns any run into an interactive page: one HTML file, no server, no build step.
 
 ```bash
-raftchaos viz --out viz.html --open                              # the seven demo scenes
+raftchaos viz --out viz.html --open                              # the nine demo scenes
 raftchaos viz --seed 4 --bug forget_vote_on_restart --profile adversarial --out run.html --open
 ```
 
@@ -166,7 +170,8 @@ raftchaos bugs                            # list injectable bugs
 
 Useful flags: `--nodes N` (cluster size), `--duration MS`, `--history` (print the client
 operation history), `--jobs N` (parallel worker processes for `hunt`),
-`--profile adversarial` (targeted faults, see below).
+`--profile adversarial` (targeted faults, see below), `--pre-vote`, and `--snapshot-every N`
+(compact the log into a snapshot every N applied entries).
 
 ### A clean run
 
@@ -198,34 +203,39 @@ reproduce: raftchaos run --seed 1 --nodes 3 --bug double_vote --trace
 
 ```console
 $ raftchaos hunt --all --seeds 200 --jobs 2
-bug                          seed  tried    time  violation
-none                            -    200   12.9s  none found
-double_vote                     1      2    0.4s  election-safety
-stale_log_vote                  0      1    0.1s  leader-completeness
-commit_without_majority         0      1    0.1s  state-machine-safety
-commit_old_term                 -    200   13.3s  none found
-no_truncate_on_conflict         0      1    0.1s  state-machine-safety
-forget_vote_on_restart          -    200   13.1s  none found
+bug                              seed  tried    time  violation
+none                                -    200   27.0s  none found
+double_vote                         1      2    0.8s  election-safety
+stale_log_vote                      0      1    0.2s  leader-completeness
+commit_without_majority             0      1    0.1s  state-machine-safety
+commit_old_term                     -    200   27.3s  none found
+no_truncate_on_conflict             0      1    0.1s  state-machine-safety
+forget_vote_on_restart              -    200   27.2s  none found
+snapshot_without_sessions           0      1    0.1s  state-machine-safety
+install_snapshot_discards_log       -    200   11.0s  none found
 ```
 
 The `none` row is the control: a correct node must never fail. Timings depend on your machine.
 
-Two bugs survive random faults because they need a rare interleaving. The `adversarial`
-profile adds faults that fire on an event instead of on a timer, and finds all six:
+Three rows stay empty here. Two protocol bugs need an interleaving that random faults almost never
+produce, and the snapshot wipe only shows up after about a thousand seeds. The `adversarial`
+profile adds faults that fire on an event instead of on a timer, and finds all eight:
 
 ```console
 $ raftchaos hunt --all --profile adversarial --seeds 500 --jobs 2
-bug                          seed  tried    time  violation
-none                            -    500   10.6s  none found
-double_vote                     1      2    0.2s  election-safety
-stale_log_vote                  0      1    0.1s  leader-completeness
-commit_without_majority         0      1    0.1s  state-machine-safety
-commit_old_term                61     62    1.5s  leader-completeness
-no_truncate_on_conflict         0      1    5.2s  liveness
-forget_vote_on_restart          4      5    0.2s  election-safety
+bug                              seed  tried    time  violation
+none                                -    500   24.0s  none found
+double_vote                         1      2    0.4s  election-safety
+stale_log_vote                      0      1    0.1s  leader-completeness
+commit_without_majority             0      1    0.1s  state-machine-safety
+commit_old_term                    61     62    3.3s  leader-completeness
+no_truncate_on_conflict             0      1   11.7s  liveness
+forget_vote_on_restart              4      5    0.5s  election-safety
+snapshot_without_sessions           0      1    0.2s  state-machine-safety
+install_snapshot_discards_log      52     53    4.6s  liveness
 ```
 
-The `adversarial` profile combines three changes:
+The `adversarial` profile combines four changes:
 
 - **Crash after voting.** A node that grants a vote is crashed right away (50% chance) and
   restarts within 10-80 ms, so a node that forgets its vote can vote twice in one term.
@@ -233,8 +243,12 @@ The `adversarial` profile combines three changes:
   received them (15% chance). This is the setup of Figure 8 in the Raft paper.
 - **Tight timing.** Election timeouts of 150-180 ms produce frequent split votes, and
   append messages carry one entry, so a partly replicated log is common.
+- **Late snapshots.** Half of the `InstallSnapshot` messages are delivered a second time,
+  100-400 ms later, like a retransmission, after the follower may already have moved on.
 
-The correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5 nodes.
+The correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5 nodes. With snapshots
+every 10 entries it passes 1000 seeds in each profile with 3 and with 5 nodes, and 1000 more with
+PreVote on as well.
 
 ## Metrics, SLOs and anomalies
 
@@ -287,6 +301,17 @@ about, each fixed and remeasured:
 | A client accepted a late reply to a request it had abandoned | Match replies by request id | a `get` returned another key's value | test passes |
 
 Details, and the PreVote experiment over 50 seeds: [docs/real-cluster.md](docs/real-cluster.md#findings-from-the-real-cluster).
+
+Snapshots are on by default in `raftchaos node` (every 1000 entries). With one follower down while
+three clients wrote for 90 seconds (about 9,600 entries), then restarted:
+
+| | Files per node | Follower caught up after restart |
+| --- | --- | --- |
+| No snapshots | 840 KB, and growing with every write | 0.93 s, receiving every entry it missed |
+| Snapshot every 1000 entries | 56 KB, bounded | 0.35 s, through `InstallSnapshot` |
+
+Measured on three local processes, single runs; the times include about 0.3 s of process start.
+The Docker chaos demo also passes with snapshots on. [Details](docs/real-cluster.md#snapshots-on-the-real-cluster).
 
 ## Architecture
 
@@ -357,6 +382,7 @@ flowchart LR
 | **Seed** | The integer that fixes every random choice in a run, so a failure can be replayed exactly. |
 | **Deterministic simulation** | Running the system on a virtual clock and a fake network, so runs are fast and reproducible. |
 | **PreVote** | An extra round before an election: a node first asks whether it *would* get votes, without changing anyone's term. A node that cannot win never disturbs the others. |
+| **Snapshot** | The applied state up to some log index, saved so that the log before it can be deleted. A node too far behind receives the snapshot instead of the entries it missed. |
 | **SLO and error budget** | A reliability target (for example 90% availability) and the share of allowed failure a run has used. |
 
 ## Determinism: same seed, same run
@@ -392,11 +418,14 @@ it cannot be trusted to find the ones you did not plant.
 | `no_truncate_on_conflict` | Follower keeps conflicting log entries | State Machine Safety, liveness | Seed 0 | Seed 0 |
 | `commit_old_term` | Commits earlier-term entries by counting replicas (Raft paper, Figure 8) | Leader Completeness | Not found | Seed 61 |
 | `forget_vote_on_restart` | `voted_for` is not persisted across a restart | Election Safety | Not found | Seed 4 |
+| `snapshot_without_sessions` | Snapshots leave out the client sessions used for deduplication | State Machine Safety | Seed 0 | Seed 0 |
+| `install_snapshot_discards_log` | A follower wipes its whole log on any snapshot, even entries past it | Leader Completeness, liveness | Seed 1121 | Seed 52 (message storm) |
 
-Seeds are for 3 nodes. With 5 nodes the adversarial profile finds all six as well
-(`commit_old_term` at seed 429). Random faults alone miss the last two bugs, which is why the
-targeted profile exists: a test suite that cannot find planted bugs cannot be trusted to find
-unplanted ones.
+Seeds are for 3 nodes. With 5 nodes the adversarial profile finds all eight as well
+(`commit_old_term` at seed 429, `install_snapshot_discards_log` at seed 68). The two snapshot bugs
+turn snapshots on by themselves, every 20 entries, since they cannot show up otherwise. Random
+faults alone miss two of the protocol bugs, which is why the targeted profile exists: a test suite
+that cannot find planted bugs cannot be trusted to find unplanted ones.
 
 Control result: with the default profile a correct node stayed clean on 1500 seeds with 3 nodes
 and 1000 seeds with 5 nodes.
@@ -430,7 +459,8 @@ raft-chaos/
 │   ├── invariants.py      # Election Safety, Leader Completeness, Log Matching, SM Safety
 │   ├── linearizability.py # Wing and Gong style history checker
 │   ├── workload.py        # concurrent clients producing the history
-│   ├── bugs.py            # the 6 injectable protocol bugs
+│   ├── bugs.py            # the 8 injectable bugs (6 protocol, 2 snapshot)
+│   ├── statemachine.py    # the key-value store, its sessions and its snapshots
 │   ├── metrics.py         # latency, availability, outage; Prometheus text format
 │   ├── slo.py             # SLOs and error-budget accounting
 │   ├── anomaly.py         # robust z-score detector, fault attribution
@@ -471,22 +501,24 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 
 **Current limitations**
 
-- No log compaction or snapshots, and no cluster membership changes.
+- No cluster membership changes: servers cannot be added or removed while the cluster runs.
+  Joint consensus is the most intricate part of Raft and was left out on purpose.
+- Snapshots are sent whole and re-sent with every heartbeat until the follower acknowledges one.
+  That is fine for this small store; production systems send them in chunks and back off.
 - The simulator uses a simulated network. The real runtime was run on localhost and once in
   Docker on macOS; the Docker chaos script is not part of CI.
-- PreVote is on by default in the real runtime and off by default in the simulator, so the
-  published seeds stay reproducible. `--pre-vote` turns it on in any simulator command.
+- PreVote and snapshots are on by default in the real runtime (a snapshot every 1000 entries)
+  and off by default in the simulator, so the published seeds stay reproducible.
+  `--pre-vote` and `--snapshot-every N` turn them on in any simulator command.
 - No authentication or TLS on the node ports.
-- The default profile misses two of the six planted bugs; use `--profile adversarial`.
+- The default profile misses two of the eight planted bugs; use `--profile adversarial`.
 - Single-key operations only; the linearizability checker is exponential in the worst case.
 
 **Done since the first release:** Prometheus metrics, SLO report, anomaly detection, SVG
 timelines, a real TCP runtime with durable storage, a linearizability check of a live cluster,
-an interactive visualiser with a live mode, and PreVote.
+an interactive visualiser with a live mode, PreVote, and snapshots with InstallSnapshot.
 
-**Planned**
-
-- [ ] Snapshots and cluster membership changes
+**Left out on purpose:** cluster membership changes (see above).
 
 ## References
 

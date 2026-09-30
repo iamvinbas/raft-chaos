@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from importlib import resources
 from typing import Any
 
-from ..bugs import Bugs
+from ..bugs import DEFAULT_SNAPSHOT_EVERY, SNAPSHOT_BUGS, Bugs
 from ..experiments import isolation_config
 from ..sim import SimConfig, run_simulation
 
@@ -26,7 +26,8 @@ class Scenario:
     bug: str | None = None
     profile: str = "default"
     nodes: int = 3
-    experiment: str | None = None  # "isolation" or "isolation+prevote": a scripted fault
+    # A scripted fault instead of random chaos: "isolation", optionally "+prevote", "+snapshots".
+    experiment: str | None = None
 
 
 DEMO_SCENARIOS: tuple[Scenario, ...] = (
@@ -88,6 +89,27 @@ DEMO_SCENARIOS: tuple[Scenario, ...] = (
         experiment="isolation+prevote",
     ),
     Scenario(
+        "snapshot",
+        "Snapshot catch-up",
+        "A node that fell behind is caught up with a snapshot",
+        "Every server compacts its log into a snapshot every 20 entries. One follower is cut off "
+        "while the others keep committing and compact past everything it has. When the link "
+        "heals, the leader can no longer send those entries, so it sends its snapshot instead "
+        "(purple) and the follower continues from there.",
+        0,
+        experiment="isolation+prevote+snapshots",
+    ),
+    Scenario(
+        "snapshot-bug",
+        "Bug: snapshot wipes log",
+        "Planted bug: installing a snapshot wipes newer entries",
+        "A follower that receives a snapshot throws away its whole log, even entries past the "
+        "snapshot that it had already acknowledged to the leader. Those acknowledgements helped "
+        "commit entries that now exist on too few servers.",
+        1121,
+        "install_snapshot_discards_log",
+    ),
+    Scenario(
         "stale-log",
         "Bug: stale log vote",
         "Planted bug: voting for a candidate with a stale log",
@@ -111,19 +133,29 @@ def make_config(
         config = replace(config, duration_ms=duration)
     if bug:
         config = replace(config, bugs=Bugs.only(bug))
+        if bug in SNAPSHOT_BUGS:
+            config = replace(
+                config, raft=replace(config.raft, snapshot_every=DEFAULT_SNAPSHOT_EVERY)
+            )
     return config
 
 
 def record(scenario: Scenario, duration: int | None = None) -> dict[str, Any]:
     if scenario.experiment:
         config = isolation_config("prevote" in scenario.experiment, scenario.nodes)
+        if "snapshots" in scenario.experiment:
+            config = replace(
+                config, raft=replace(config.raft, snapshot_every=DEFAULT_SNAPSHOT_EVERY)
+            )
     else:
         config = make_config(scenario.nodes, scenario.bug, scenario.profile, duration)
     result = run_simulation(scenario.seed, config, record=True)
     assert result.recording is not None
     data = result.recording.export(result, scenario.title, scenario.bug, scenario.profile)
     data.update(key=scenario.key, short=scenario.short, description=scenario.description)
-    if scenario.experiment:
+    if scenario.experiment == "isolation+prevote+snapshots":
+        data["reproduce"] = f"raftchaos viz --out viz.html  # scene #{scenario.key}"
+    elif scenario.experiment:
         data["reproduce"] = f"raftchaos experiment prevote --seeds 1 --start {scenario.seed}"
     return data
 

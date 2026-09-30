@@ -69,6 +69,31 @@ class AppendEntriesReply:
 
 
 @dataclass(frozen=True)
+class Snapshot:
+    """The applied state up to and including `last_index`; it replaces that prefix of the log."""
+
+    last_index: int
+    last_term: int
+    data: tuple[tuple[object, object], ...]  # the store's key-value pairs
+    sessions: tuple[tuple[str, int, object], ...]  # client, last request id, its result
+
+
+@dataclass(frozen=True)
+class InstallSnapshot:
+    """Sent by a leader to a follower that needs entries the leader has already compacted."""
+
+    term: int
+    leader_id: int
+    snapshot: Snapshot
+
+
+@dataclass(frozen=True)
+class InstallSnapshotReply:
+    term: int
+    match_index: int  # the follower now holds everything up to this index
+
+
+@dataclass(frozen=True)
 class ClientRequest:
     req_id: int
     command: Command
@@ -89,6 +114,8 @@ Message = (
     | PreVoteReply
     | AppendEntries
     | AppendEntriesReply
+    | InstallSnapshot
+    | InstallSnapshotReply
     | ClientRequest
     | ClientResponse
 )

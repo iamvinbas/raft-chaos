@@ -16,7 +16,15 @@ from typing import Any
 from .bugs import Bugs
 from .invariants import InvariantChecker, InvariantViolation, Violation
 from .linearizability import Op, find_violation
-from .messages import Addr, AppendEntries, ClientResponse, Message, RequestVote
+from .messages import (
+    Addr,
+    AppendEntries,
+    ClientResponse,
+    InstallSnapshot,
+    Message,
+    RequestVote,
+    Snapshot,
+)
 from .node import RaftConfig, RaftNode, Role, Storage
 from .recorder import CUT, CUT_IN_FLIGHT, DELIVERED, LOST, PENDING, RECEIVER_DOWN, Recorder
 from .workload import Workload
@@ -42,6 +50,10 @@ class SimConfig:
     # Targeted faults, off by default. Each fires on an event instead of on a timer.
     crash_on_vote_prob: float = 0.0  # crash a node right after it grants a vote
     torn_broadcast_prob: float = 0.0  # leader crashes after its append reaches only one peer
+    stale_snapshot_prob: float = 0.0  # a snapshot is delivered again, late, like a retransmission
+    # A run never has more than a few dozen events pending. Far more means the nodes are
+    # generating traffic without bound: report it instead of simulating it forever.
+    max_pending_events: int = 10_000
     raft: RaftConfig = field(default_factory=RaftConfig)
     bugs: Bugs = field(default_factory=Bugs)
 
@@ -55,6 +67,7 @@ class SimConfig:
         params: dict[str, Any] = {
             "crash_on_vote_prob": 0.5,
             "torn_broadcast_prob": 0.15,
+            "stale_snapshot_prob": 0.5,
             "raft": RaftConfig(election_timeout_max=180, max_batch=1),
         }
         params.update(overrides)
@@ -178,7 +191,14 @@ class Simulator:
             bugs=self.config.bugs,
             storage=self.storages[node_id],
             apply_hook=lambda nid, idx, entry: self.checker.on_apply(self, nid, idx, entry),
+            snapshot_hook=self._on_snapshot,
         )
+
+    def _on_snapshot(self, node_id: int, snap: Snapshot, how: str) -> None:
+        self.stats["snapshots_taken" if how == "take" else "snapshots_installed"] += 1
+        if self.recorder is not None:
+            self.recorder.on_snapshot(node_id, snap, how)
+        self.checker.on_snapshot(self, node_id, snap, how)
 
     # ---- network -----------------------------------------------------------------------
 
@@ -200,6 +220,12 @@ class Simulator:
             delay = self.rng.randint(self.config.latency_min, self.config.latency_max)
             mid = rec.on_send(src, dst, msg, PENDING) if rec is not None else -1
             self.schedule(delay, "deliver", src, dst, msg, mid)
+        stale = self.config.stale_snapshot_prob
+        if stale > 0 and isinstance(msg, InstallSnapshot) and self.nemesis_rng.random() < stale:
+            # A late copy, arriving after the follower may already have moved past it.
+            self.stats["stale_snapshots"] += 1
+            mid = rec.on_send(src, dst, msg, PENDING) if rec is not None else -1
+            self.schedule(self.nemesis_rng.randint(100, 400), "deliver", src, dst, msg, mid)
 
     def _dispatch(self, src: int, outbox: list[tuple[Addr, Message]]) -> None:
         outbox = self._tear_broadcast(src, outbox)
@@ -361,6 +387,9 @@ class Simulator:
             time, _, kind, args = heapq.heappop(self._queue)
             self.now = time
             self._handle(kind, args)
+            if len(self._queue) > self.config.max_pending_events:
+                message = f"message storm: {len(self._queue)} events pending at once"
+                raise InvariantViolation(Violation("liveness", message, self.now))
             self._observe()
             if self.recorder is not None:
                 self.recorder.on_step()

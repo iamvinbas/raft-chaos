@@ -10,7 +10,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 
 from .anomaly import analyze
-from .bugs import BUG_NAMES, Bugs
+from .bugs import BUG_NAMES, DEFAULT_SNAPSHOT_EVERY, SNAPSHOT_BUGS, Bugs
 from .metrics import compute_metrics, to_prometheus
 from .sim import SimConfig, run_simulation
 from .slo import evaluate, render_report
@@ -57,6 +57,11 @@ def _config_from(args: argparse.Namespace, bug: str | None) -> SimConfig:
         config = replace(config, bugs=Bugs.only(bug))
     if getattr(args, "pre_vote", False):
         config = replace(config, raft=replace(config.raft, pre_vote=True))
+    every = getattr(args, "snapshot_every", 0) or 0
+    if not every and bug in SNAPSHOT_BUGS:
+        every = DEFAULT_SNAPSHOT_EVERY  # a snapshot bug needs snapshots to show up at all
+    if every:
+        config = replace(config, raft=replace(config.raft, snapshot_every=every))
     return config
 
 
@@ -80,6 +85,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         f"reproduce: raftchaos run --seed {args.seed} --nodes {args.nodes}"
         + (f" --bug {args.bug}" if args.bug else "")
         + (f" --profile {args.profile}" if args.profile != "default" else "")
+        + (f" --snapshot-every {args.snapshot_every}" if args.snapshot_every else "")
         + " --trace"
     )
     return 1
@@ -87,7 +93,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 def cmd_hunt(args: argparse.Namespace) -> int:
     targets = ["none", *BUG_NAMES] if args.all else [args.bug or "none"]
-    print(f"{'bug':26} {'seed':>6} {'tried':>6} {'time':>7}  violation")
+    width = max(len(name) for name in ("none", *BUG_NAMES)) + 1
+    print(f"{'bug':{width}} {'seed':>6} {'tried':>6} {'time':>7}  violation")
     exit_code = 0
     for bug in targets:
         started = time.perf_counter()
@@ -99,7 +106,7 @@ def cmd_hunt(args: argparse.Namespace) -> int:
         if bug != "none" and not found:
             exit_code = 1
         seed_col = str(seed) if found else "-"
-        print(f"{bug:26} {seed_col:>6} {tried:>6} {elapsed:>6.1f}s  {kind or 'none found'}")
+        print(f"{bug:{width}} {seed_col:>6} {tried:>6} {elapsed:>6.1f}s  {kind or 'none found'}")
     return exit_code
 
 
@@ -181,7 +188,7 @@ def cmd_node(args: argparse.Namespace) -> int:
         Path(args.data_dir),
         listen=listen,
         metrics_port=args.metrics_port,
-        config=RaftConfig(pre_vote=not args.no_pre_vote),
+        config=RaftConfig(pre_vote=not args.no_pre_vote, snapshot_every=args.snapshot_every),
     )
     try:
         asyncio.run(serve_forever(server))
@@ -331,6 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--bug", choices=BUG_NAMES)
     run.add_argument("--profile", choices=PROFILES, default="default")
     run.add_argument("--pre-vote", action="store_true", help="enable the PreVote extension")
+    run.add_argument("--snapshot-every", type=int, help="compact the log every N applied entries")
     run.add_argument("--duration", type=int, help="milliseconds of load and faults")
     run.add_argument("--trace", action="store_true", help="print nemesis actions")
     run.add_argument("--history", action="store_true", help="print the client operation history")
@@ -340,6 +348,9 @@ def build_parser() -> argparse.ArgumentParser:
     hunt_p.add_argument("--bug", choices=BUG_NAMES)
     hunt_p.add_argument("--profile", choices=PROFILES, default="default")
     hunt_p.add_argument("--pre-vote", action="store_true", help="enable the PreVote extension")
+    hunt_p.add_argument(
+        "--snapshot-every", type=int, help="compact the log every N applied entries"
+    )
     hunt_p.add_argument("--all", action="store_true", help="control run plus every injected bug")
     hunt_p.add_argument("--seeds", type=int, default=200, help="how many seeds to try")
     hunt_p.add_argument("--start", type=int, default=0)
@@ -353,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--bug", choices=BUG_NAMES)
         p.add_argument("--profile", choices=PROFILES, default="default")
         p.add_argument("--pre-vote", action="store_true", help="enable the PreVote extension")
+        p.add_argument("--snapshot-every", type=int, help="compact the log every N applied entries")
         p.add_argument("--duration", type=int, help="milliseconds of load and faults")
 
     metrics = sub.add_parser("metrics", help="print run metrics in Prometheus text format")
@@ -382,6 +394,12 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--metrics-port", type=int)
     node.add_argument("--log-level", default="info")
     node.add_argument("--no-pre-vote", action="store_true", help="disable PreVote (on by default)")
+    node.add_argument(
+        "--snapshot-every",
+        type=int,
+        default=1000,
+        help="compact the log every N applied entries (0 disables snapshots)",
+    )
     node.set_defaults(func=cmd_node)
 
     kv = sub.add_parser("kv", help="read or write the replicated store")

@@ -104,4 +104,25 @@ likely cause, not a proven one. After the fix, the same fault sequences ran clea
 The simulator did not catch it because its workload matches replies by request id already: the bug
 lived in the real client only, which is why checking the real system matters.
 
+## Snapshots on the real cluster
+
+`raftchaos node` compacts its log every 1000 applied entries (`--snapshot-every`, 0 disables it).
+To measure it, one follower of three local processes was killed with `kill -9`, three clients
+wrote for 30 or 90 seconds, then the follower was restarted and timed until its commit index
+matched the leader's. Every load round was checked and found linearizable.
+
+| Entries written | Snapshots | Follower caught up after restart | Files per node |
+| --- | --- | --- | --- |
+| about 3,100 | off | 0.58 s | 264 KB |
+| about 3,100 | every 1000 | 0.36 s, snapshot up to 3002 | 16 KB |
+| about 9,600 | off | 0.93 s | 840 KB |
+| about 9,600 | every 1000 | 0.35 s, snapshot up to 9002 | 56 KB |
+
+Without snapshots both columns grow with the log; with them they stay flat. These are single runs
+and the times include about 0.3 s of Python start-up, so read them as a trend, not a benchmark.
+
+The Docker chaos demo passes with snapshots on as well: 3,981 operations, linearizable, all three
+nodes at commit 3,986 with snapshots at 3,000 to 3,089. Node 0's volume held a 184-byte snapshot
+and a log of the 986 entries after it, instead of all 3,986.
+
 > The node ports have no authentication or TLS, so this is a demo, not a deployment.

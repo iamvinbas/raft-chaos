@@ -65,7 +65,8 @@ class NodeServer:
         self.addresses = addresses
         self.listen = listen or addresses[node_id]
         self.metrics_port = metrics_port
-        self.config = config or RaftConfig(pre_vote=True)  # a real service wants PreVote
+        # A real service wants PreVote, and a log that does not grow forever.
+        self.config = config or RaftConfig(pre_vote=True, snapshot_every=1000)
         self.storage = FileStorage(data_dir / f"node-{node_id}")
         self.counters = Counters()
         # Per peer: when we last heard from it, and frames exchanged. Feeds the live view.
@@ -250,6 +251,7 @@ class NodeServer:
             "commit_index": node.commit_index,
             "last_applied": node.last_applied,
             "log_entries": node.last_index,
+            "snapshot_index": node.snap_index,
             "pre_vote": self.config.pre_vote,
             "voted_for": node.storage.voted_for,
             "log_tail": [e.term for e in node.log[-12:]],
