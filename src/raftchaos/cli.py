@@ -12,6 +12,8 @@ from dataclasses import replace
 from .bugs import BUG_NAMES, Bugs
 from .sim import SimConfig, run_simulation
 
+PROFILES = ("default", "adversarial")
+
 
 def _probe(args: tuple[int, SimConfig]) -> tuple[int, str | None, str]:
     seed, config = args
@@ -41,7 +43,8 @@ def hunt(config: SimConfig, start: int, count: int, jobs: int) -> tuple[int, str
 
 
 def _config_from(args: argparse.Namespace, bug: str | None) -> SimConfig:
-    config = SimConfig(n_nodes=args.nodes)
+    make = SimConfig.adversarial if args.profile == "adversarial" else SimConfig
+    config = make(n_nodes=args.nodes)
     if getattr(args, "duration", None):
         config = replace(config, duration_ms=args.duration)
     if bug and bug != "none":
@@ -68,6 +71,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     print(
         f"reproduce: raftchaos run --seed {args.seed} --nodes {args.nodes}"
         + (f" --bug {args.bug}" if args.bug else "")
+        + (f" --profile {args.profile}" if args.profile != "default" else "")
         + " --trace"
     )
     return 1
@@ -104,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--seed", type=int, required=True)
     run.add_argument("--nodes", type=int, default=3)
     run.add_argument("--bug", choices=BUG_NAMES)
+    run.add_argument("--profile", choices=PROFILES, default="default")
     run.add_argument("--duration", type=int, help="milliseconds of load and faults")
     run.add_argument("--trace", action="store_true", help="print nemesis actions")
     run.add_argument("--history", action="store_true", help="print the client operation history")
@@ -111,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hunt_p = sub.add_parser("hunt", help="search seeds for a failing run")
     hunt_p.add_argument("--bug", choices=BUG_NAMES)
+    hunt_p.add_argument("--profile", choices=PROFILES, default="default")
     hunt_p.add_argument("--all", action="store_true", help="control run plus every injected bug")
     hunt_p.add_argument("--seeds", type=int, default=200, help="how many seeds to try")
     hunt_p.add_argument("--start", type=int, default=0)

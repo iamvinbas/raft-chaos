@@ -16,7 +16,7 @@ from typing import Any
 from .bugs import Bugs
 from .invariants import InvariantChecker, InvariantViolation, Violation
 from .linearizability import Op, find_violation
-from .messages import Addr, ClientResponse, Message
+from .messages import Addr, AppendEntries, ClientResponse, Message, RequestVote
 from .node import RaftConfig, RaftNode, Role, Storage
 from .workload import Workload
 
@@ -35,8 +35,26 @@ class SimConfig:
     client_timeout: int = 400
     keys: tuple[str, ...] = ("x", "y")
     nemesis: bool = True
+    # Targeted faults, off by default. Each fires on an event instead of on a timer.
+    crash_on_vote_prob: float = 0.0  # crash a node right after it grants a vote
+    torn_broadcast_prob: float = 0.0  # leader crashes after its append reaches only one peer
     raft: RaftConfig = field(default_factory=RaftConfig)
     bugs: Bugs = field(default_factory=Bugs)
+
+    @classmethod
+    def adversarial(cls, **overrides: Any) -> SimConfig:
+        """Targeted faults, tight election timeouts and one-entry appends.
+
+        Finds the bugs that random faults rarely hit: a node that forgets its vote after a
+        crash, and the Raft paper's Figure 8 scenario.
+        """
+        params: dict[str, Any] = {
+            "crash_on_vote_prob": 0.5,
+            "torn_broadcast_prob": 0.15,
+            "raft": RaftConfig(election_timeout_max=180, max_batch=1),
+        }
+        params.update(overrides)
+        return cls(**params)
 
 
 @dataclass
@@ -135,16 +153,49 @@ class Simulator:
             self.schedule(delay, "deliver", src, dst, msg)
 
     def _dispatch(self, src: int, outbox: list[tuple[Addr, Message]]) -> None:
+        outbox = self._tear_broadcast(src, outbox)
         for dst, msg in outbox:
             self.send(src, dst, msg)
 
     # ---- faults ------------------------------------------------------------------------
 
-    def _crash(self, node_id: int) -> None:
+    def _can_crash(self) -> bool:
+        down = self.config.n_nodes - len(self.live_nodes())
+        return self.workload.active and down < self.config.n_nodes // 2
+
+    def _crash(self, node_id: int, quick: bool = False) -> None:
         self.nodes[node_id] = None
         self.stats["crashes"] += 1
         self.log(f"crash node {node_id}")
-        self.schedule(self.nemesis_rng.randint(50, 1200), "restart", node_id)
+        low, high = (10, 80) if quick else (50, 1200)
+        self.schedule(self.nemesis_rng.randint(low, high), "restart", node_id)
+
+    def _tear_broadcast(
+        self, src: int, outbox: list[tuple[Addr, Message]]
+    ) -> list[tuple[Addr, Message]]:
+        """Leader dies mid-broadcast: only one follower ever sees the new entries."""
+        prob = self.config.torn_broadcast_prob
+        node = self.nodes[src]
+        if prob <= 0 or node is None or node.role is not Role.LEADER:
+            return outbox
+        appends = [(d, m) for d, m in outbox if isinstance(m, AppendEntries) and m.entries]
+        rng = self.nemesis_rng
+        if not appends or rng.random() >= prob or not self._can_crash():
+            return outbox
+        self.stats["torn_broadcasts"] += 1
+        self.log(f"leader {src} crashes mid-broadcast")
+        self.schedule(0, "crash_now", src)
+        return [rng.choice(appends)]
+
+    def _maybe_crash_voter(self, node_id: int, msg: RequestVote) -> None:
+        prob = self.config.crash_on_vote_prob
+        node = self.nodes[node_id]
+        if prob <= 0 or node is None or node.storage.voted_for != msg.candidate_id:
+            return
+        if msg.term == node.current_term and self.nemesis_rng.random() < prob:
+            if self._can_crash():
+                self.log(f"node {node_id} crashes right after voting for {msg.candidate_id}")
+                self._crash(node_id, quick=True)
 
     def _nemesis(self) -> None:
         rng = self.nemesis_rng
@@ -201,6 +252,12 @@ class Simulator:
             node = self.nodes[dst]
             if node is not None:
                 self._dispatch(dst, node.receive(src, msg, self.now))
+                if isinstance(msg, RequestVote):
+                    self._maybe_crash_voter(dst, msg)
+        elif kind == "crash_now":
+            (node_id,) = args
+            if self.nodes[node_id] is not None:
+                self._crash(node_id, quick=True)
         elif kind == "client_wake":
             self.workload.on_wake(*args)
         elif kind == "client_timeout":

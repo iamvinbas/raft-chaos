@@ -43,11 +43,13 @@ pip install -e ".[dev]"
 raftchaos run --seed 3                    # one deterministic run, correct Raft
 raftchaos run --seed 1 --bug double_vote --trace   # a failing run, with the fault timeline
 raftchaos hunt --all --seeds 200 --jobs 2 # scan seeds for every injectable bug
+raftchaos hunt --all --profile adversarial --seeds 500 --jobs 2   # targeted faults
 raftchaos bugs                            # list injectable bugs
 ```
 
 Useful flags: `--nodes N` (cluster size), `--duration MS`, `--history` (print the client
-operation history), `--jobs N` (parallel worker processes for `hunt`).
+operation history), `--jobs N` (parallel worker processes for `hunt`),
+`--profile adversarial` (targeted faults, see below).
 
 ### A clean run
 
@@ -90,6 +92,32 @@ forget_vote_on_restart          -    200   13.1s  none found
 ```
 
 The `none` row is the control: a correct node must never fail. Timings depend on your machine.
+
+Two bugs survive random faults because they need a rare interleaving. The `adversarial`
+profile adds faults that fire on an event instead of on a timer, and finds all six:
+
+```console
+$ raftchaos hunt --all --profile adversarial --seeds 500 --jobs 2
+bug                          seed  tried    time  violation
+none                            -    500   10.6s  none found
+double_vote                     1      2    0.2s  election-safety
+stale_log_vote                  0      1    0.1s  leader-completeness
+commit_without_majority         0      1    0.1s  state-machine-safety
+commit_old_term                61     62    1.5s  leader-completeness
+no_truncate_on_conflict         0      1    5.2s  liveness
+forget_vote_on_restart          4      5    0.2s  election-safety
+```
+
+The `adversarial` profile combines three changes:
+
+- **Crash after voting.** A node that grants a vote is crashed right away (50% chance) and
+  restarts within 10-80 ms, so a node that forgets its vote can vote twice in one term.
+- **Torn broadcast.** A leader that sends new entries is crashed after only one follower
+  received them (15% chance). This is the setup of Figure 8 in the Raft paper.
+- **Tight timing.** Election timeouts of 150-180 ms produce frequent split votes, and
+  append messages carry one entry, so a partly replicated log is common.
+
+The correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5 nodes.
 
 ## Architecture
 
@@ -158,18 +186,19 @@ On any failure the CLI prints the exact `reproduce:` command for you.
 Each flag in `bugs.py` re-introduces a classic Raft mistake. If the simulator cannot find them,
 it cannot be trusted to find the ones you did not plant.
 
-| Bug | What it breaks | Expected to be caught by | Result (3 nodes, seeds 0-1499) |
-| --- | --- | --- | --- |
-| `double_vote` | Grants a vote even if already voted in this term | Election Safety | Found at seed 1 |
-| `stale_log_vote` | Skips the "candidate log is up to date" vote check | Leader Completeness | Found at seed 0 |
-| `commit_without_majority` | Leader commits with one replica fewer than a majority | State Machine Safety | Found at seed 0 |
-| `no_truncate_on_conflict` | Follower keeps conflicting log entries | State Machine Safety | Found at seed 0 |
-| `commit_old_term` | Commits earlier-term entries by counting replicas (Raft paper, Figure 8) | State Machine Safety / Leader Completeness | **Not found yet** |
-| `forget_vote_on_restart` | `voted_for` is not persisted across a restart | Election Safety | **Not found yet** |
+| Bug | What it breaks | Caught by | Default profile (seeds 0-1499) | Adversarial profile |
+| --- | --- | --- | --- | --- |
+| `double_vote` | Grants a vote even if already voted in this term | Election Safety | Seed 1 | Seed 1 |
+| `stale_log_vote` | Skips the "candidate log is up to date" vote check | Leader Completeness | Seed 0 | Seed 0 |
+| `commit_without_majority` | Leader commits with one replica fewer than a majority | State Machine Safety | Seed 0 | Seed 0 |
+| `no_truncate_on_conflict` | Follower keeps conflicting log entries | State Machine Safety, liveness | Seed 0 | Seed 0 |
+| `commit_old_term` | Commits earlier-term entries by counting replicas (Raft paper, Figure 8) | Leader Completeness | Not found | Seed 61 |
+| `forget_vote_on_restart` | `voted_for` is not persisted across a restart | Election Safety | Not found | Seed 4 |
 
-The two misses are honest ones: both need a rare interleaving (a specific crash or leader
-change at a specific moment) that the current nemesis does not hit often enough. Improving
-the fault schedule so these get found is the next milestone for the simulator itself.
+Seeds are for 3 nodes. With 5 nodes the adversarial profile finds all six as well
+(`commit_old_term` at seed 429). Random faults alone miss the last two bugs, which is why the
+targeted profile exists: a test suite that cannot find planted bugs cannot be trusted to find
+unplanted ones.
 
 Control result: a correct node stayed clean on all 1500 seeds with 3 nodes and 1000 seeds with 5 nodes.
 
@@ -226,7 +255,7 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 
 - No log compaction or snapshots, and no cluster membership changes.
 - The network is simulated; nodes do not talk over real sockets yet.
-- Two of the six injected bugs have not been found yet (see above).
+- The default profile misses two of the six planted bugs; use `--profile adversarial`.
 - Single-key operations only; the linearizability checker is exponential in the worst case.
 
 **Planned**
@@ -235,7 +264,6 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 - [ ] Anomaly detection over run statistics
 - [ ] Docker Compose demo with real fault injection via `tc` / `iptables`
 - [ ] Web visualiser for timelines and histories
-- [ ] Smarter nemesis to find `commit_old_term` and `forget_vote_on_restart`
 
 ## References
 

@@ -57,3 +57,20 @@ def test_duplicated_client_requests_do_not_break_linearizability():
     # Seed 913 used to fail: a duplicated put was applied twice and rolled a key back.
     assert run_simulation(913, SimConfig()).ok
     assert run_simulation(913, SimConfig(dup_prob=0.3)).ok
+
+
+@pytest.mark.parametrize("nodes", [3, 5])
+def test_correct_raft_survives_adversarial_profile(nodes):
+    config = SimConfig.adversarial(n_nodes=nodes)
+    for seed in range(25):
+        result = run_simulation(seed, config)
+        assert result.ok, f"seed {seed}: {result.violation}"
+
+
+@pytest.mark.parametrize(
+    ("bug", "seeds"),
+    [("forget_vote_on_restart", range(30)), ("commit_old_term", range(100))],
+)
+def test_adversarial_profile_finds_the_hard_bugs(bug, seeds):
+    config = SimConfig.adversarial(bugs=Bugs.only(bug))
+    assert any(not run_simulation(seed, config).ok for seed in seeds), bug
