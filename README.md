@@ -4,6 +4,8 @@
 
 **Raft consensus in pure Python, broken on purpose by a deterministic chaos simulator.**
 
+**[▶ Watch it fail in your browser](https://iamvinbas.github.io/raft-chaos/viz/)**
+
 [![CI](https://img.shields.io/github/actions/workflow/status/iamvinbas/raft-chaos/ci.yml?branch=master&label=CI)](https://github.com/iamvinbas/raft-chaos/actions)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -43,6 +45,8 @@ starting elections (term 9) while nodes 1 and 2 elect a leader and keep committi
 </div>
 
 ## Watch it fail
+
+**Live demo: [iamvinbas.github.io/raft-chaos/viz](https://iamvinbas.github.io/raft-chaos/viz/)**, no install needed.
 
 `raftchaos viz` turns any run into an interactive page: one HTML file, no server, no build step.
 
