@@ -149,6 +149,98 @@ def cmd_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_addr(text: str) -> tuple[str, int]:
+    host, _, port = text.rpartition(":")
+    if not host or not port.isdigit():
+        raise argparse.ArgumentTypeError(f"expected host:port, got {text!r}")
+    return host, int(port)
+
+
+def _parse_nodes(text: str) -> list[tuple[str, int]]:
+    return [_parse_addr(part) for part in text.split(",") if part]
+
+
+def cmd_node(args: argparse.Namespace) -> int:
+    import asyncio
+    import logging
+    from pathlib import Path
+
+    from .runtime.server import NodeServer, serve_forever
+
+    logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(name)s %(message)s")
+    addresses = dict(enumerate(_parse_nodes(args.peers)))
+    if args.id not in addresses:
+        raise SystemExit(f"--id {args.id} is not in --peers ({len(addresses)} nodes)")
+    listen = ("0.0.0.0", addresses[args.id][1]) if args.listen is None else args.listen
+    server = NodeServer(
+        args.id, addresses, Path(args.data_dir), listen=listen, metrics_port=args.metrics_port
+    )
+    try:
+        asyncio.run(serve_forever(server))
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def cmd_kv(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from .runtime.client import KvClient, Unavailable
+
+    if args.action == "put" and args.value is None:
+        raise SystemExit("kv put needs a value")
+    client = KvClient(args.nodes)
+
+    async def go() -> int:
+        try:
+            if args.action == "put":
+                await client.put(args.key, args.value, args.timeout)
+                print("OK")
+            else:
+                print(await client.get(args.key, args.timeout))
+        except Unavailable as exc:
+            print(f"unavailable: {exc}")
+            return 1
+        return 0
+
+    return asyncio.run(go())
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from .runtime.client import fetch_status
+
+    async def go() -> int:
+        code = 0
+        for i, address in enumerate(args.metrics):
+            try:
+                print(await fetch_status(address))
+            except (OSError, asyncio.TimeoutError):
+                print(f'{{"id": {i}, "role": "unreachable"}}')
+                code = 1
+        return code
+
+    return asyncio.run(go())
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from .runtime.verify import run_verify
+
+    report = asyncio.run(run_verify(args.nodes, args.seconds, args.clients, seed=args.seed))
+    print(
+        f"{report.ops_ok} operations acknowledged, {report.ops_unknown} with unknown outcome, "
+        f"{report.seconds:.1f}s"
+    )
+    if report.ok:
+        print("OK: the history is linearizable")
+        return 0
+    print(f"VIOLATION: history of key {report.violation_key!r} is not linearizable")
+    return 1
+
+
 def cmd_bugs(_args: argparse.Namespace) -> int:
     print("\n".join(BUG_NAMES))
     return 0
@@ -203,6 +295,34 @@ def build_parser() -> argparse.ArgumentParser:
     timeline.add_argument("--out", required=True, help="output .svg path")
     timeline.add_argument("--title")
     timeline.set_defaults(func=cmd_timeline)
+
+    node = sub.add_parser("node", help="run one real Raft node over TCP")
+    node.add_argument("--id", type=int, required=True)
+    node.add_argument("--peers", required=True, help="host:port of every node, ordered by id")
+    node.add_argument("--listen", type=_parse_addr, help="default: 0.0.0.0:<own port>")
+    node.add_argument("--data-dir", required=True)
+    node.add_argument("--metrics-port", type=int)
+    node.add_argument("--log-level", default="info")
+    node.set_defaults(func=cmd_node)
+
+    kv = sub.add_parser("kv", help="read or write the replicated store")
+    kv.add_argument("--nodes", type=_parse_nodes, required=True)
+    kv.add_argument("--timeout", type=float, default=5.0)
+    kv.add_argument("action", choices=("put", "get"))
+    kv.add_argument("key")
+    kv.add_argument("value", nargs="?")
+    kv.set_defaults(func=cmd_kv)
+
+    status = sub.add_parser("status", help="query /status on each node's metrics port")
+    status.add_argument("--metrics", type=_parse_nodes, required=True)
+    status.set_defaults(func=cmd_status)
+
+    verify = sub.add_parser("verify", help="check a real cluster for linearizability")
+    verify.add_argument("--nodes", type=_parse_nodes, required=True)
+    verify.add_argument("--seconds", type=float, default=20.0)
+    verify.add_argument("--clients", type=int, default=3)
+    verify.add_argument("--seed", type=int)
+    verify.set_defaults(func=cmd_verify)
 
     bugs = sub.add_parser("bugs", help="list injectable bugs")
     bugs.set_defaults(func=cmd_bugs)

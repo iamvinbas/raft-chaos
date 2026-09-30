@@ -1,0 +1,44 @@
+# Three real Raft nodes over TCP. The chaos script breaks them with kill, tc and iptables.
+#   docker compose up -d --build
+#   ./scripts/chaos-demo.sh
+x-node: &node
+  build: .
+  cap_add: [NET_ADMIN] # lets `tc` and `iptables` run inside the container
+  restart: "no"
+
+x-peers: &peers "node0:7000,node1:7000,node2:7000"
+
+services:
+  node0:
+    <<: *node
+    command: ["node", "--id", "0", "--peers", *peers, "--data-dir", "/data", "--metrics-port", "9100"]
+    volumes: ["node0-data:/data"]
+    ports: ["7100:7000", "9100:9100"]
+  node1:
+    <<: *node
+    command: ["node", "--id", "1", "--peers", *peers, "--data-dir", "/data", "--metrics-port", "9100"]
+    volumes: ["node1-data:/data"]
+    ports: ["7101:7000", "9101:9100"]
+  node2:
+    <<: *node
+    command: ["node", "--id", "2", "--peers", *peers, "--data-dir", "/data", "--metrics-port", "9100"]
+    volumes: ["node2-data:/data"]
+    ports: ["7102:7000", "9102:9100"]
+
+  # One-off client: `docker compose run --rm client kv --nodes ... put k v`
+  client:
+    <<: *node
+    profiles: ["tools"]
+    cap_add: []
+
+  # Optional dashboard: `docker compose --profile monitoring up -d`, then open localhost:9090
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["monitoring"]
+    volumes: ["./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+volumes:
+  node0-data:
+  node1-data:
+  node2-data:
