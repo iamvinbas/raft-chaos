@@ -57,6 +57,17 @@ class SimConfig:
         return cls(**params)
 
 
+@dataclass(frozen=True)
+class TimelineEvent:
+    """Something that happened in a run: a node changing role, or a fault being injected."""
+
+    time: int
+    kind: str  # "state" for a role change, otherwise the fault: partition, crash, heal, ...
+    node: int | None
+    detail: str  # for "state": follower | candidate | leader | down
+    term: int = 0
+
+
 @dataclass
 class RunResult:
     seed: int
@@ -65,6 +76,8 @@ class RunResult:
     stats: dict[str, int]
     end_time: int
     trace: list[str]
+    timeline: list[TimelineEvent]
+    config: SimConfig
 
     @property
     def ok(self) -> bool:
@@ -87,6 +100,8 @@ class Simulator:
         self.checker = InvariantChecker()
         self.stats: Counter[str] = Counter()
         self.trace_log: list[str] | None = [] if trace else None
+        self.timeline: list[TimelineEvent] = []
+        self._last_state: dict[int, tuple[str, int]] = {}
         self._queue: list[tuple[int, int, str, tuple[Any, ...]]] = []
         self._seq = 0
         self.workload = Workload(
@@ -113,6 +128,20 @@ class Simulator:
     def log(self, text: str) -> None:
         if self.trace_log is not None:
             self.trace_log.append(f"[{self.now:>6}ms] {text}")
+
+    def _mark(self, kind: str, text: str, node: int | None = None) -> None:
+        """Record a fault in the timeline (and in the trace, when tracing)."""
+        self.timeline.append(TimelineEvent(self.now, kind, node, text))
+        self.log(text)
+
+    def _observe(self) -> None:
+        """Record every role change so a run can be drawn or measured afterwards."""
+        for i in self.ids:
+            node = self.nodes[i]
+            state = ("down", 0) if node is None else (node.role.value, node.current_term)
+            if self._last_state.get(i) != state:
+                self._last_state[i] = state
+                self.timeline.append(TimelineEvent(self.now, "state", i, state[0], state[1]))
 
     def live_nodes(self) -> list[RaftNode]:
         return [n for i in self.ids if (n := self.nodes.get(i)) is not None]
@@ -166,7 +195,7 @@ class Simulator:
     def _crash(self, node_id: int, quick: bool = False) -> None:
         self.nodes[node_id] = None
         self.stats["crashes"] += 1
-        self.log(f"crash node {node_id}")
+        self._mark("crash", f"crash node {node_id}", node_id)
         low, high = (10, 80) if quick else (50, 1200)
         self.schedule(self.nemesis_rng.randint(low, high), "restart", node_id)
 
@@ -183,7 +212,7 @@ class Simulator:
         if not appends or rng.random() >= prob or not self._can_crash():
             return outbox
         self.stats["torn_broadcasts"] += 1
-        self.log(f"leader {src} crashes mid-broadcast")
+        self._mark("torn", f"leader {src} crashes mid-broadcast", src)
         self.schedule(0, "crash_now", src)
         return [rng.choice(appends)]
 
@@ -194,7 +223,11 @@ class Simulator:
             return
         if msg.term == node.current_term and self.nemesis_rng.random() < prob:
             if self._can_crash():
-                self.log(f"node {node_id} crashes right after voting for {msg.candidate_id}")
+                self._mark(
+                    "vote-crash",
+                    f"node {node_id} crashes right after voting for {msg.candidate_id}",
+                    node_id,
+                )
                 self._crash(node_id, quick=True)
 
     def _nemesis(self) -> None:
@@ -213,22 +246,22 @@ class Simulator:
             cut = rng.randint(1, self.config.n_nodes - 1)
             self.groups = {n: (1 if k < cut else 0) for k, n in enumerate(order)}
             self.stats["partitions"] += 1
-            self.log(f"partition {sorted(order[:cut])} | {sorted(order[cut:])}")
+            self._mark("partition", f"partition {sorted(order[:cut])} | {sorted(order[cut:])}")
         elif action == "isolate_leader" and leader is not None:
             self.groups = {n: (1 if n == leader.id else 0) for n in self.ids}
             self.stats["partitions"] += 1
-            self.log(f"isolate leader {leader.id}")
+            self._mark("isolate", f"isolate leader {leader.id}", leader.id)
         elif action == "heal":
             self.groups = None
             self.drop_prob = self.config.drop_prob
-            self.log("heal network")
+            self._mark("heal", "heal network")
         elif action == "crash" and can_crash and alive:
             self._crash(rng.choice(alive))
         elif action == "crash_leader" and can_crash and leader is not None:
             self._crash(leader.id)
         elif action == "flaky":
             self.drop_prob = rng.choice([0.0, 0.1, 0.3])
-            self.log(f"drop probability {self.drop_prob}")
+            self._mark("flaky", f"drop probability {self.drop_prob}")
         self.schedule(rng.randint(100, 800), "nemesis")
 
     # ---- event loop --------------------------------------------------------------------
@@ -265,7 +298,7 @@ class Simulator:
         elif kind == "restart":
             (node_id,) = args
             if self.nodes[node_id] is None:
-                self.log(f"restart node {node_id}")
+                self._mark("restart", f"restart node {node_id}", node_id)
                 self._boot(node_id)
         elif kind == "nemesis":
             if self.workload.active:
@@ -276,6 +309,7 @@ class Simulator:
             time, _, kind, args = heapq.heappop(self._queue)
             self.now = time
             self._handle(kind, args)
+            self._observe()
             self.checker.check(self)
         self.now = end
 
@@ -287,7 +321,7 @@ class Simulator:
         for i in self.ids:
             if self.nodes[i] is None:
                 self._boot(i)
-        self.log("quiesce: network healed, all nodes up")
+        self._mark("heal", "quiesce: network healed, all nodes up")
 
     def _check_liveness(self) -> None:
         leader = self.leader()
@@ -334,6 +368,8 @@ class Simulator:
             stats,
             self.now,
             self.trace_log or [],
+            self.timeline,
+            self.config,
         )
 
 

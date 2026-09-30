@@ -9,8 +9,12 @@ from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 
+from .anomaly import analyze
 from .bugs import BUG_NAMES, Bugs
+from .metrics import compute_metrics, to_prometheus
 from .sim import SimConfig, run_simulation
+from .slo import evaluate, render_report
+from .timeline_svg import render_timeline
 
 PROFILES = ("default", "adversarial")
 
@@ -47,6 +51,8 @@ def _config_from(args: argparse.Namespace, bug: str | None) -> SimConfig:
     config = make(n_nodes=args.nodes)
     if getattr(args, "duration", None):
         config = replace(config, duration_ms=args.duration)
+    if getattr(args, "no_nemesis", False):
+        config = replace(config, nemesis=False)
     if bug and bug != "none":
         config = replace(config, bugs=Bugs.only(bug))
     return config
@@ -95,6 +101,54 @@ def cmd_hunt(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def cmd_metrics(args: argparse.Namespace) -> int:
+    config = _config_from(args, args.bug)
+    result = run_simulation(args.seed, config)
+    labels = {"seed": str(args.seed), "nodes": str(args.nodes)}
+    print(to_prometheus(compute_metrics(result), labels), end="")
+    return 0
+
+
+def cmd_slo(args: argparse.Namespace) -> int:
+    """Same seed twice: a steady-state baseline, then with the nemesis on."""
+    missed = False
+    for label, no_nemesis in (("steady state (no faults)", True), ("under chaos", False)):
+        args.no_nemesis = no_nemesis
+        result = run_simulation(args.seed, _config_from(args, args.bug))
+        results = evaluate(compute_metrics(result))
+        print(render_report(f"seed {args.seed}, {args.nodes} nodes, {label}", results))
+        print()
+        missed = missed or any(not r.met for r in results)
+    return 1 if missed and args.strict else 0
+
+
+def cmd_anomalies(args: argparse.Namespace) -> int:
+    args.no_nemesis = False
+    result = run_simulation(args.seed, _config_from(args, args.bug))
+    detection = analyze(result)
+    print(f"seed {args.seed}: {len(detection.anomalies)} of {detection.windows} windows flagged")
+    for anomaly, causes in zip(detection.anomalies, detection.causes, strict=True):
+        active = ", ".join(sorted({f.kind for f in causes})) or "none nearby"
+        print(
+            f"  {anomaly.start:>5}-{anomaly.end:<5}ms  {anomaly.reason:16} "
+            f"score {anomaly.score:+.1f}  faults: {active}"
+        )
+    args.no_nemesis = True
+    quiet = analyze(run_simulation(args.seed, _config_from(args, args.bug)))
+    print(f"same seed without faults: {len(quiet.anomalies)} of {quiet.windows} windows flagged")
+    return 0
+
+
+def cmd_timeline(args: argparse.Namespace) -> int:
+    result = run_simulation(args.seed, _config_from(args, args.bug))
+    svg = render_timeline(result, args.title)
+    with open(args.out, "w", encoding="utf-8") as handle:
+        handle.write(svg)
+    outcome = f"violation: {result.violation}" if result.violation else "no violation"
+    print(f"wrote {args.out} ({outcome})")
+    return 0
+
+
 def cmd_bugs(_args: argparse.Namespace) -> int:
     print("\n".join(BUG_NAMES))
     return 0
@@ -123,6 +177,32 @@ def build_parser() -> argparse.ArgumentParser:
     hunt_p.add_argument("--nodes", type=int, default=3)
     hunt_p.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) // 4))
     hunt_p.set_defaults(func=cmd_hunt)
+
+    def add_sim_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--seed", type=int, required=True)
+        p.add_argument("--nodes", type=int, default=3)
+        p.add_argument("--bug", choices=BUG_NAMES)
+        p.add_argument("--profile", choices=PROFILES, default="default")
+        p.add_argument("--duration", type=int, help="milliseconds of load and faults")
+
+    metrics = sub.add_parser("metrics", help="print run metrics in Prometheus text format")
+    add_sim_args(metrics)
+    metrics.set_defaults(func=cmd_metrics)
+
+    slo = sub.add_parser("slo", help="SLO and error-budget report, steady state vs chaos")
+    add_sim_args(slo)
+    slo.add_argument("--strict", action="store_true", help="exit 1 if any SLO is missed")
+    slo.set_defaults(func=cmd_slo)
+
+    anomalies = sub.add_parser("anomalies", help="flag anomalous windows and attribute faults")
+    add_sim_args(anomalies)
+    anomalies.set_defaults(func=cmd_anomalies)
+
+    timeline = sub.add_parser("timeline", help="draw a run as an SVG timeline")
+    add_sim_args(timeline)
+    timeline.add_argument("--out", required=True, help="output .svg path")
+    timeline.add_argument("--title")
+    timeline.set_defaults(func=cmd_timeline)
 
     bugs = sub.add_parser("bugs", help="list injectable bugs")
     bugs.set_defaults(func=cmd_bugs)

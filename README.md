@@ -4,7 +4,7 @@
 
 **Raft consensus in pure Python, broken on purpose by a deterministic chaos simulator.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/iamvinbas/raft-chaos/ci.yml?branch=main&label=CI)](https://github.com/iamvinbas/raft-chaos/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/iamvinbas/raft-chaos/ci.yml?branch=master&label=CI)](https://github.com/iamvinbas/raft-chaos/actions)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](pyproject.toml)
@@ -17,6 +17,15 @@ key-value store, then attacks it with partitions, crashes, packet loss and
 duplication. Every step is checked against Raft's safety invariants and a
 linearizability checker. When something breaks, you get a **seed** that replays
 the exact same failure, every time.
+
+<div align="center">
+
+<img src="docs/timeline-chaos.svg" alt="Timeline of a correct Raft cluster under partitions and crashes" width="100%">
+
+<sub>A correct 3-node cluster under chaos: leaders come and go, the network partitions, nodes crash,
+and clients keep succeeding whenever a majority can talk. Generated with `raftchaos timeline`.</sub>
+
+</div>
 
 ## Why this exists
 
@@ -44,6 +53,10 @@ raftchaos run --seed 3                    # one deterministic run, correct Raft
 raftchaos run --seed 1 --bug double_vote --trace   # a failing run, with the fault timeline
 raftchaos hunt --all --seeds 200 --jobs 2 # scan seeds for every injectable bug
 raftchaos hunt --all --profile adversarial --seeds 500 --jobs 2   # targeted faults
+raftchaos slo --seed 7                    # SLO and error-budget report
+raftchaos anomalies --seed 7              # anomalous windows, attributed to faults
+raftchaos metrics --seed 7                # Prometheus text format
+raftchaos timeline --seed 7 --out run.svg # draw the run
 raftchaos bugs                            # list injectable bugs
 ```
 
@@ -118,6 +131,63 @@ The `adversarial` profile combines three changes:
   append messages carry one entry, so a partly replicated log is common.
 
 The correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5 nodes.
+
+## Metrics, SLOs and anomalies
+
+The simulator also measures the service the way a client sees it, on the same virtual clock,
+so the numbers reproduce from a seed.
+
+**Prometheus metrics.** `raftchaos metrics --seed 7` prints the text exposition format
+(operation outcomes, a latency histogram, availability, longest outage, leader changes).
+Availability is probed in 250 ms windows: a window is up if at least one operation succeeded.
+
+**SLO report.** `raftchaos slo --seed 7` runs the same seed twice, once without faults and once
+under chaos, and reports how much of each error budget was used:
+
+```console
+$ raftchaos slo --seed 7
+seed 7, 3 nodes, steady state (no faults)
+SLO                target     actual  budget used  status
+availability        0.900      1.000          0%  MET
+latency-p99         250ms       45ms         18%  MET
+max-outage         2000ms      217ms         11%  MET
+
+seed 7, 3 nodes, under chaos
+SLO                target     actual  budget used  status
+availability        0.900      0.812        188%  MISSED
+latency-p99         250ms       77ms         31%  MET
+max-outage         2000ms     1051ms         53%  MET
+```
+
+The targets are examples, not claims about Raft: the point is that the budget is measured, so
+a change that makes the cluster slower to recover shows up as a number instead of a hunch.
+
+**Anomaly detection.** A robust z-score (median and MAD) over per-window throughput and latency
+flags unusual windows, and each flag is attributed to the injected faults active around it:
+
+```console
+$ raftchaos anomalies --seed 7
+seed 7: 3 of 16 windows flagged
+   2000-2500 ms  throughput drop  score -0.9  faults: crash, partition
+   3000-3500 ms  latency spike    score +4.5  faults: crash, partition
+   5500-6000 ms  latency spike    score +4.7  faults: isolate
+same seed without faults: 0 of 16 windows flagged
+```
+
+Under chaos nearly every window is close to some fault, so "did it flag a faulty window"
+would be a meaningless score. The check that means something is the flag rate with and without
+faults. Over seeds 0-29 the detector flags 7 of 480 windows (1.5%) on fault-free runs and 119
+of 480 (25%) under chaos. It is a baseline detector, not a production one.
+
+**Timelines.** `raftchaos timeline --seed 1 --bug double_vote --out run.svg` draws a run: role of
+every node over time, network faults, successful client operations, and a red line where an
+invariant broke.
+
+<div align="center">
+
+<img src="docs/timeline-bug.svg" alt="Timeline of a run where the double_vote bug causes two leaders in one term" width="100%">
+
+</div>
 
 ## Architecture
 
@@ -232,9 +302,14 @@ raft-chaos/
 │   ├── linearizability.py # Wing and Gong style history checker
 │   ├── workload.py        # concurrent clients producing the history
 │   ├── bugs.py            # the 6 injectable protocol bugs
-│   └── cli.py             # `raftchaos run | hunt | bugs`
-├── tests/                 # simulation and linearizability tests
+│   ├── metrics.py         # latency, availability, outage; Prometheus text format
+│   ├── slo.py             # SLOs and error-budget accounting
+│   ├── anomaly.py         # robust z-score detector, fault attribution
+│   ├── timeline_svg.py    # SVG timeline of roles, faults and client successes
+│   └── cli.py             # `raftchaos run | hunt | metrics | slo | anomalies | timeline | bugs`
+├── tests/                 # simulation, linearizability and observability tests
 ├── docs/design.md         # invariants and design decisions
+├── docs/*.svg             # timelines used in this README
 └── .github/workflows/ci.yml
 ```
 
@@ -258,10 +333,10 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 - The default profile misses two of the six planted bugs; use `--profile adversarial`.
 - Single-key operations only; the linearizability checker is exponential in the worst case.
 
+**Done since the first release:** Prometheus metrics, SLO report, anomaly detection, SVG timelines.
+
 **Planned**
 
-- [ ] Prometheus metrics and an SLO report (availability, election time, commit latency)
-- [ ] Anomaly detection over run statistics
 - [ ] Docker Compose demo with real fault injection via `tc` / `iptables`
 - [ ] Web visualiser for timelines and histories
 

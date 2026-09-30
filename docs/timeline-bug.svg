@@ -1,0 +1,219 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 306" width="1100" height="306" font-family="Helvetica, Arial, sans-serif" role="img" aria-label="Raft cluster timeline for seed 1">
+<title>Planted bug: double_vote (seed 1)</title>
+<rect width="1100" height="306" fill="#ffffff"/>
+<text x="92" y="30" font-size="18" font-weight="700" fill="#1f2430">
+Planted bug: double_vote (seed 1)</text>
+<text x="92" y="50" font-size="12" fill="#5b6475">3 nodes, 8s of faults then the network heals</text>
+<line x1="92.0" y1="64" x2="92.0" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="92.0" y="248" font-size="10" fill="#7a8394" text-anchor="middle">0s</text>
+<line x1="228.2" y1="64" x2="228.2" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="228.2" y="248" font-size="10" fill="#7a8394" text-anchor="middle">1s</text>
+<line x1="364.3" y1="64" x2="364.3" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="364.3" y="248" font-size="10" fill="#7a8394" text-anchor="middle">2s</text>
+<line x1="500.5" y1="64" x2="500.5" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="500.5" y="248" font-size="10" fill="#7a8394" text-anchor="middle">3s</text>
+<line x1="636.7" y1="64" x2="636.7" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="636.7" y="248" font-size="10" fill="#7a8394" text-anchor="middle">4s</text>
+<line x1="772.9" y1="64" x2="772.9" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="772.9" y="248" font-size="10" fill="#7a8394" text-anchor="middle">5s</text>
+<line x1="909.0" y1="64" x2="909.0" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="909.0" y="248" font-size="10" fill="#7a8394" text-anchor="middle">6s</text>
+<line x1="1045.2" y1="64" x2="1045.2" y2="232" stroke="#e6e9ef" stroke-width="1"/>
+<text x="1045.2" y="248" font-size="10" fill="#7a8394" text-anchor="middle">7s</text>
+<text x="82" y="84" font-size="12" fill="#3a4152" text-anchor="end">
+network</text>
+<rect x="92" y="70" width="984" height="20" fill="#f6f7fa" rx="3"/>
+<rect x="273.1" y="70" width="93.3" height="20" fill="#d6455d" opacity="0.85" rx="3"><title>isolate 1330-2015 ms</title></rect>
+<rect x="458.4" y="70" width="126.5" height="20" fill="#d6455d" opacity="0.85" rx="3"><title>isolate 2691-3620 ms</title></rect>
+<rect x="679.9" y="70" width="274.9" height="20" fill="#e8a838" opacity="0.85" rx="3"><title>flaky 4317-6336 ms</title></rect>
+<rect x="782.1" y="70" width="77.6" height="20" fill="#d6455d" opacity="0.85" rx="3"><title>isolate 5068-5638 ms</title></rect>
+<rect x="859.8" y="70" width="95.1" height="20" fill="#d6455d" opacity="0.85" rx="3"><title>isolate 5638-6336 ms</title></rect>
+<text x="82" y="118" font-size="12" fill="#3a4152" text-anchor="end">
+node 0</text>
+<rect x="92" y="104" width="984" height="20" fill="#f6f7fa" rx="3"/>
+<rect x="92.4" y="104" width="28.2" height="20" fill="#c5d0e0"><title>node 0: follower, 3-210 ms</title></rect>
+<rect x="120.6" y="104" width="2.2" height="20" fill="#e8a838"><title>node 0: candidate, 210-226 ms</title></rect>
+<rect x="122.8" y="104" width="247.4" height="20" fill="#2e9e5b"><title>node 0: leader, 226-2043 ms</title></rect>
+<rect x="370.2" y="104" width="1.0" height="20" fill="#c5d0e0"><title>node 0: follower, 2043-2050 ms</title></rect>
+<rect x="371.2" y="104" width="5.0" height="20" fill="#e8a838"><title>node 0: candidate, 2050-2087 ms</title></rect>
+<rect x="376.2" y="104" width="111.7" height="20" fill="#c5d0e0"><title>node 0: follower, 2087-2907 ms</title></rect>
+<rect x="487.9" y="104" width="231.9" height="20" fill="#c5d0e0"><title>node 0: follower, 2907-4610 ms</title></rect>
+<rect x="719.8" y="104" width="1.8" height="20" fill="#e8a838"><title>node 0: candidate, 4610-4623 ms</title></rect>
+<rect x="721.5" y="104" width="235.4" height="20" fill="#2e9e5b"><title>node 0: leader, 4623-6352 ms</title></rect>
+<rect x="957.0" y="104" width="116.8" height="20" fill="#c5d0e0"><title>node 0: follower, 6352-7210 ms</title></rect>
+<rect x="1073.8" y="104" width="1.2" height="20" fill="#e8a838"><title>node 0: candidate, 7210-7219 ms</title></rect>
+<rect x="1075.0" y="104" width="1.0" height="20" fill="#2e9e5b"><title>node 0: leader, 7219-7226 ms</title></rect>
+<text x="82" y="150" font-size="12" fill="#3a4152" text-anchor="end">
+node 1</text>
+<rect x="92" y="136" width="984" height="20" fill="#f6f7fa" rx="3"/>
+<rect x="92.4" y="136" width="29.8" height="20" fill="#c5d0e0"><title>node 1: follower, 3-222 ms</title></rect>
+<rect x="122.2" y="136" width="179.9" height="20" fill="#c5d0e0"><title>node 1: follower, 222-1543 ms</title></rect>
+<rect x="302.1" y="136" width="2.0" height="20" fill="#e8a838"><title>node 1: candidate, 1543-1558 ms</title></rect>
+<rect x="304.2" y="136" width="69.0" height="20" fill="#2e9e5b"><title>node 1: leader, 1558-2065 ms</title></rect>
+<rect x="373.2" y="136" width="1.1" height="20" fill="#c5d0e0"><title>node 1: follower, 2065-2073 ms</title></rect>
+<rect x="374.3" y="136" width="1.8" height="20" fill="#e8a838"><title>node 1: candidate, 2073-2086 ms</title></rect>
+<rect x="376.1" y="136" width="110.6" height="20" fill="#2e9e5b"><title>node 1: leader, 2086-2898 ms</title></rect>
+<rect x="486.6" y="136" width="42.9" height="20" fill="#3a3f4b"><title>node 1: down, 2898-3213 ms</title></rect>
+<rect x="529.5" y="136" width="31.3" height="20" fill="#c5d0e0"><title>node 1: follower, 3213-3443 ms</title></rect>
+<rect x="560.9" y="136" width="27.1" height="20" fill="#e8a838"><title>node 1: candidate, 3443-3642 ms</title></rect>
+<rect x="587.9" y="136" width="132.6" height="20" fill="#c5d0e0"><title>node 1: follower, 3642-4616 ms</title></rect>
+<rect x="720.6" y="136" width="88.1" height="20" fill="#c5d0e0"><title>node 1: follower, 4616-5263 ms</title></rect>
+<rect x="808.7" y="136" width="30.0" height="20" fill="#c5d0e0"><title>node 1: follower, 5263-5483 ms</title></rect>
+<rect x="838.6" y="136" width="50.4" height="20" fill="#e8a838"><title>node 1: candidate, 5483-5853 ms</title></rect>
+<rect x="889.0" y="136" width="31.3" height="20" fill="#e8a838"><title>node 1: candidate, 5853-6083 ms</title></rect>
+<rect x="920.4" y="136" width="0.8" height="20" fill="#e8a838"><title>node 1: candidate, 6083-6088 ms</title></rect>
+<rect x="921.0" y="136" width="125.8" height="20" fill="#2e9e5b"><title>node 1: leader, 6088-7012 ms</title></rect>
+<rect x="1046.9" y="136" width="29.1" height="20" fill="#3a3f4b"><title>node 1: down, 7012-7226 ms</title></rect>
+<text x="82" y="182" font-size="12" fill="#3a4152" text-anchor="end">
+node 2</text>
+<rect x="92" y="168" width="984" height="20" fill="#f6f7fa" rx="3"/>
+<rect x="92.4" y="168" width="29.7" height="20" fill="#c5d0e0"><title>node 2: follower, 3-221 ms</title></rect>
+<rect x="122.1" y="168" width="181.0" height="20" fill="#c5d0e0"><title>node 2: follower, 221-1550 ms</title></rect>
+<rect x="303.1" y="168" width="68.6" height="20" fill="#c5d0e0"><title>node 2: follower, 1550-2054 ms</title></rect>
+<rect x="371.7" y="168" width="3.1" height="20" fill="#c5d0e0"><title>node 2: follower, 2054-2077 ms</title></rect>
+<rect x="374.8" y="168" width="112.8" height="20" fill="#c5d0e0"><title>node 2: follower, 2077-2905 ms</title></rect>
+<rect x="487.6" y="168" width="0.8" height="20" fill="#e8a838"><title>node 2: candidate, 2905-2908 ms</title></rect>
+<rect x="488.0" y="168" width="233.0" height="20" fill="#2e9e5b"><title>node 2: leader, 2908-4619 ms</title></rect>
+<rect x="721.0" y="168" width="86.6" height="20" fill="#c5d0e0"><title>node 2: follower, 4619-5255 ms</title></rect>
+<rect x="807.6" y="168" width="40.9" height="20" fill="#e8a838"><title>node 2: candidate, 5255-5555 ms</title></rect>
+<rect x="848.5" y="168" width="36.8" height="20" fill="#e8a838"><title>node 2: candidate, 5555-5825 ms</title></rect>
+<rect x="885.2" y="168" width="35.4" height="20" fill="#e8a838"><title>node 2: candidate, 5825-6085 ms</title></rect>
+<rect x="920.6" y="168" width="152.5" height="20" fill="#c5d0e0"><title>node 2: follower, 6085-7205 ms</title></rect>
+<rect x="1073.1" y="168" width="2.9" height="20" fill="#e8a838"><title>node 2: candidate, 7205-7226 ms</title></rect>
+<rect x="1076.0" y="168" width="0.8" height="20" fill="#2e9e5b"><title>node 2: leader, 7226-7226 ms</title></rect>
+<text x="82" y="224" font-size="12" fill="#3a4152" text-anchor="end">
+clients ok</text>
+<rect x="92" y="210" width="984" height="20" fill="#f6f7fa" rx="3"/>
+<line x1="134.5" y1="213" x2="134.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="137.2" y1="213" x2="137.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="136.9" y1="213" x2="136.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="142.2" y1="213" x2="142.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="145.1" y1="213" x2="145.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="146.1" y1="213" x2="146.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="151.8" y1="213" x2="151.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="154.6" y1="213" x2="154.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="154.6" y1="213" x2="154.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="155.7" y1="213" x2="155.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="159.8" y1="213" x2="159.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="162.5" y1="213" x2="162.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="164.2" y1="213" x2="164.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="172.6" y1="213" x2="172.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="172.8" y1="213" x2="172.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="174.8" y1="213" x2="174.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="176.8" y1="213" x2="176.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="179.6" y1="213" x2="179.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="182.7" y1="213" x2="182.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="182.1" y1="213" x2="182.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="185.4" y1="213" x2="185.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="188.8" y1="213" x2="188.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="191.7" y1="213" x2="191.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="195.8" y1="213" x2="195.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="198.8" y1="213" x2="198.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="200.5" y1="213" x2="200.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="206.0" y1="213" x2="206.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="207.3" y1="213" x2="207.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="215.8" y1="213" x2="215.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="218.1" y1="213" x2="218.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="222.6" y1="213" x2="222.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="226.5" y1="213" x2="226.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="229.1" y1="213" x2="229.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="235.3" y1="213" x2="235.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="240.0" y1="213" x2="240.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="245.6" y1="213" x2="245.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="246.7" y1="213" x2="246.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="251.5" y1="213" x2="251.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="256.5" y1="213" x2="256.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="265.6" y1="213" x2="265.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="267.4" y1="213" x2="267.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="270.9" y1="213" x2="270.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="274.9" y1="213" x2="274.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="321.6" y1="213" x2="321.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="328.8" y1="213" x2="328.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="349.2" y1="213" x2="349.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="362.0" y1="213" x2="362.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="368.0" y1="213" x2="368.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="387.0" y1="213" x2="387.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="391.6" y1="213" x2="391.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="392.1" y1="213" x2="392.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="398.3" y1="213" x2="398.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="398.5" y1="213" x2="398.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="402.1" y1="213" x2="402.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="403.6" y1="213" x2="403.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="407.1" y1="213" x2="407.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="408.9" y1="213" x2="408.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="412.4" y1="213" x2="412.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="413.4" y1="213" x2="413.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="416.4" y1="213" x2="416.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="419.0" y1="213" x2="419.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="425.4" y1="213" x2="425.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="427.7" y1="213" x2="427.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="433.4" y1="213" x2="433.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="438.3" y1="213" x2="438.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="441.3" y1="213" x2="441.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="445.1" y1="213" x2="445.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="454.9" y1="213" x2="454.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="504.7" y1="213" x2="504.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="509.8" y1="213" x2="509.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="522.0" y1="213" x2="522.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="531.6" y1="213" x2="531.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="535.8" y1="213" x2="535.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="546.1" y1="213" x2="546.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="563.0" y1="213" x2="563.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="568.3" y1="213" x2="568.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="578.3" y1="213" x2="578.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="583.2" y1="213" x2="583.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="591.2" y1="213" x2="591.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="592.6" y1="213" x2="592.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="599.9" y1="213" x2="599.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="602.5" y1="213" x2="602.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="605.7" y1="213" x2="605.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="612.1" y1="213" x2="612.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="610.7" y1="213" x2="610.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="610.7" y1="213" x2="610.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="620.0" y1="213" x2="620.0" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="621.2" y1="213" x2="621.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="624.3" y1="213" x2="624.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="626.9" y1="213" x2="626.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="633.4" y1="213" x2="633.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="638.5" y1="213" x2="638.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="640.8" y1="213" x2="640.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="646.6" y1="213" x2="646.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="651.7" y1="213" x2="651.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="652.9" y1="213" x2="652.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="658.5" y1="213" x2="658.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="662.2" y1="213" x2="662.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="663.3" y1="213" x2="663.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="669.8" y1="213" x2="669.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="672.9" y1="213" x2="672.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="679.3" y1="213" x2="679.3" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="676.5" y1="213" x2="676.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="685.7" y1="213" x2="685.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="754.6" y1="213" x2="754.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="765.8" y1="213" x2="765.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="946.1" y1="213" x2="946.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="996.1" y1="213" x2="996.1" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1003.8" y1="213" x2="1003.8" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1010.5" y1="213" x2="1010.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1017.2" y1="213" x2="1017.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1017.7" y1="213" x2="1017.7" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1027.2" y1="213" x2="1027.2" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1028.5" y1="213" x2="1028.5" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1034.9" y1="213" x2="1034.9" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1035.6" y1="213" x2="1035.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1038.4" y1="213" x2="1038.4" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1042.6" y1="213" x2="1042.6" y2="227" stroke="#2e9e5b" stroke-width="1"/>
+<line x1="1076.0" y1="60" x2="1076.0" y2="232" stroke="#d6455d" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="1070.0" y="56" font-size="12" font-weight="700" fill="#d6455d" text-anchor="end">election-safety violated at 7226 ms</text>
+<rect x="92" y="270" width="12" height="12" fill="#2e9e5b" rx="2"/>
+<text x="110" y="280" font-size="11" fill="#3a4152">leader</text>
+<rect x="160.4" y="270" width="12" height="12" fill="#c5d0e0" rx="2"/>
+<text x="178.4" y="280" font-size="11" fill="#3a4152">follower</text>
+<rect x="241.60000000000002" y="270" width="12" height="12" fill="#e8a838" rx="2"/>
+<text x="259.6" y="280" font-size="11" fill="#3a4152">candidate</text>
+<rect x="329.20000000000005" y="270" width="12" height="12" fill="#3a3f4b" rx="2"/>
+<text x="347.20000000000005" y="280" font-size="11" fill="#3a4152">crashed</text>
+<rect x="404.00000000000006" y="270" width="12" height="12" fill="#d6455d" rx="2"/>
+<text x="422.00000000000006" y="280" font-size="11" fill="#3a4152">partition / isolated leader</text>
+<rect x="606.8000000000001" y="270" width="12" height="12" fill="#e8a838" rx="2"/>
+<text x="624.8000000000001" y="280" font-size="11" fill="#3a4152">lossy network</text>
+</svg>
