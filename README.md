@@ -34,7 +34,7 @@ the exact same failure, every time.
   was also proven in the simulator (50/50 runs disrupted without it, 0/50 with it).
 - **See it happen:** an interactive visualiser replays any run, message by message, and stops on
   the event that breaks an invariant.
-- **SRE view:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
+- **Observability:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
 - Standard library only at runtime, strict `mypy`, CI on Python 3.10 and 3.12.
 
 <div align="center">
@@ -77,6 +77,30 @@ What you see:
 
 </div>
 
+### Live mode: break a real cluster from the browser
+
+The same page can watch the Docker cluster in real time and break it with buttons: `kill -9` a
+node or the leader, cut one off with `iptables`, slow one down with `tc netem`, heal. It also runs a
+client load and, on demand, checks that load's history for linearizability.
+
+```bash
+docker compose up -d --build
+raftchaos live --open          # serves http://127.0.0.1:8080, polls every node every 100 ms
+```
+
+<div align="center">
+
+<img src="docs/img/live.png" alt="Live mode: node 1 cut off by iptables is stuck at commit 1285 while the leader and node 2 keep committing at 136 operations per second" width="100%">
+
+<sub>Live: node 1 is cut off by <code>iptables</code> and stuck at commit 1285, while the other two
+keep committing at 136 operations per second.</sub>
+
+</div>
+
+Node state is exact; the dots are drawn from per-link frame counters, so they show real traffic
+volume rather than single messages. The bridge binds to 127.0.0.1, rejects foreign `Host` headers
+and requires a per-run token on every call, so another website cannot drive your Docker.
+
 Links carry the scene and the moment, for example `viz.html#double-vote@7200`, so a failure can
 be shared exactly. The demo page is committed as [docs/viz/index.html](docs/viz/index.html), and a
 test fails if it drifts from what the code produces.
@@ -113,6 +137,7 @@ raftchaos metrics --seed 7                # Prometheus text format
 raftchaos timeline --seed 7 --out run.svg # draw the run
 raftchaos viz --out viz.html --open       # interactive visualiser
 raftchaos experiment prevote --seeds 50   # isolated node, with and without PreVote
+raftchaos live --open                     # watch and break the Docker cluster
 raftchaos bugs                            # list injectable bugs
 ```
 
@@ -240,6 +265,7 @@ about, each fixed and remeasured:
 | A rejoining node forced needless elections | PreVote | term 69, 2 extra elections | term 2, none |
 | Slow catch-up after a partition | Append-only write-ahead log | ~14 s | under 5 s |
 | Stale leader after healing | `TCP_USER_TIMEOUT` on peer sockets | 2-3 s | under 1 s |
+| A client accepted a late reply to a request it had abandoned | Match replies by request id | a `get` returned another key's value | test passes |
 
 Details, and the PreVote experiment over 50 seeds: [docs/real-cluster.md](docs/real-cluster.md#findings-from-the-real-cluster).
 
@@ -394,6 +420,7 @@ raft-chaos/
 │   ├── experiments.py     # scripted-fault experiments (PreVote)
 │   ├── viz/               # the web visualiser: template + builder
 │   ├── runtime/           # the same node over real TCP: server, client, storage, verify
+│   ├── live/              # bridge between the browser and a running cluster
 │   └── cli.py             # run, hunt, viz, experiment, metrics, slo, anomalies, …
 ├── tests/                 # simulation, linearizability and observability tests
 ├── docs/design.md         # invariants and design decisions
@@ -436,11 +463,10 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 
 **Done since the first release:** Prometheus metrics, SLO report, anomaly detection, SVG
 timelines, a real TCP runtime with durable storage, a linearizability check of a live cluster,
-an interactive visualiser, and PreVote.
+an interactive visualiser with a live mode, and PreVote.
 
 **Planned**
 
-- [ ] Live mode for the visualiser, attached to a real cluster
 - [ ] Snapshots and cluster membership changes
 
 ## References

@@ -74,6 +74,8 @@ all three cost availability.
 | 2 | A rejoining follower caught up at about 40 entries per second | Storage rewrote and fsynced the whole log on every change: O(log size) per message, blocking the event loop | Append-only write-ahead log plus a small metadata file; a torn last line is dropped on load | ~14 s to catch up | under 5 s |
 | 3 | After healing, a deposed leader kept believing it led for 2-3 s | Frames queued during the partition sat in TCP retransmission backoff | `TCP_USER_TIMEOUT` of 1 s on peer sockets, so a dead connection is replaced at once | 2-3 s | converged 0.6 s (leader cut off) and 1.0 s (follower cut off) after healing |
 
+| 4 | The live view's history check reported one non-linearizable history on key `x` | A node replies on the client's latest connection, and `KvClient` took the first reply without checking its request id: a late reply to a put the client had given up on could answer its next get | The client ignores replies whose request id is not the one it is waiting for | a `get` of a never-written key returned `'late'` | fixed |
+
 Each "before / after" is a single run of the same `iptables` isolation on the Docker cluster, so
 the numbers show the order of magnitude, not a benchmark.
 
@@ -89,5 +91,17 @@ PreVote       50/50       0/50      0.0       107ms       427ms
 
 The same holds with 5 nodes (50/50 disrupted without PreVote, 0/50 with it). The visualiser
 has both runs side by side: scenes "Isolated node, no PreVote" and "Same fault, with PreVote".
+
+### About finding 4
+
+The live check flagged one violation after a node was killed and another isolated, so the leader
+lost its majority and then regained it. The mechanism above is reproduced deterministically on a
+real TCP cluster by `test_late_commit_of_an_abandoned_put_does_not_answer_a_later_get`: it fails
+3 out of 3 times with the old client and passes with the fix. The original live run itself could
+not be reproduced on demand (5 attempts with the old client came back clean), so this bug is the
+likely cause, not a proven one. After the fix, the same fault sequences ran clean 3 out of 3 times.
+
+The simulator did not catch it because its workload matches replies by request id already: the bug
+lived in the real client only, which is why checking the real system matters.
 
 > The node ports have no authentication or TLS, so this is a demo, not a deployment.

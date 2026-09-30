@@ -32,11 +32,19 @@ class KvClient:
         try:
             writer.write(encode(self.name, request))
             await writer.drain()
-            line = await asyncio.wait_for(reader.readline(), timeout=timeout)
-            _, msg = decode(line)
-            if not isinstance(msg, ClientResponse):
-                raise ValueError("unexpected reply")
-            return msg
+            deadline = asyncio.get_running_loop().time() + timeout
+            while True:
+                left = deadline - asyncio.get_running_loop().time()
+                line = await asyncio.wait_for(reader.readline(), timeout=max(left, 0.001))
+                if not line:
+                    raise ConnectionError("node closed the connection")
+                _, msg = decode(line)
+                if not isinstance(msg, ClientResponse):
+                    raise ValueError("unexpected reply")
+                # A node answers on the client's latest connection, so a late reply to a
+                # request we already gave up on can arrive here. It is not our answer.
+                if msg.req_id == request.req_id:
+                    return msg
         finally:
             writer.close()
 

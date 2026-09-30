@@ -68,6 +68,10 @@ class NodeServer:
         self.config = config or RaftConfig(pre_vote=True)  # a real service wants PreVote
         self.storage = FileStorage(data_dir / f"node-{node_id}")
         self.counters = Counters()
+        # Per peer: when we last heard from it, and frames exchanged. Feeds the live view.
+        self.peer_heard: dict[int, int] = {}
+        self.peer_in: dict[int, int] = {p: 0 for p in addresses if p != node_id}
+        self.peer_out: dict[int, int] = {p: 0 for p in addresses if p != node_id}
         self.node: RaftNode | None = None
         self.links: dict[int, _PeerLink] = {}
         self.clients: dict[str, asyncio.StreamWriter] = {}
@@ -160,6 +164,7 @@ class NodeServer:
         try:
             link.queue.put_nowait(frame)
             self.counters.frames_out += 1
+            self.peer_out[dst] += 1
         except asyncio.QueueFull:
             self.counters.frames_dropped += 1
 
@@ -218,6 +223,9 @@ class NodeServer:
                     self.counters.bad_frames += 1
                     continue
                 assert self.node is not None
+                if isinstance(src, int):
+                    self.peer_heard[src] = self._now()
+                    self.peer_in[src] += 1
                 self._flush(self.node.receive(src, msg, self._now()))
         except (OSError, ConnectionError, asyncio.LimitOverrunError, ValueError):
             pass
@@ -233,6 +241,7 @@ class NodeServer:
     def status(self) -> dict[str, object]:
         node = self.node
         assert node is not None
+        now = self._now()
         return {
             "id": self.id,
             "role": node.role.value,
@@ -242,6 +251,16 @@ class NodeServer:
             "last_applied": node.last_applied,
             "log_entries": node.last_index,
             "pre_vote": self.config.pre_vote,
+            "voted_for": node.storage.voted_for,
+            "log_tail": [e.term for e in node.log[-12:]],
+            "peers": {
+                str(p): {
+                    "heard_ms": now - self.peer_heard[p] if p in self.peer_heard else None,
+                    "in": self.peer_in[p],
+                    "out": self.peer_out[p],
+                }
+                for p in self.peer_in
+            },
         }
 
     def prometheus(self) -> str:

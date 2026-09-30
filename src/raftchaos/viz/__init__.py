@@ -128,9 +128,13 @@ def record(scenario: Scenario, duration: int | None = None) -> dict[str, Any]:
     return data
 
 
-def build_html(scenarios: list[dict[str, Any]]) -> str:
+def build_html(scenarios: list[dict[str, Any]], live: dict[str, Any] | None = None) -> str:
+    """The page, with recorded scenarios embedded, or in live mode when `live` is given."""
     template = resources.files(__package__).joinpath("template.html").read_text(encoding="utf-8")
-    payload = json.dumps({"scenarios": scenarios}, separators=(",", ":"))
+    data: dict[str, Any] = {"scenarios": scenarios}
+    if live is not None:
+        data["live"] = live
+    payload = json.dumps(data, separators=(",", ":"))
     payload = payload.replace("</", "<\\/")  # never close the script tag from inside the data
     return template.replace("__DATA__", payload)
 

@@ -78,6 +78,21 @@ aside { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: 
 .hint { color: var(--dim); font-size: 12px; padding: 6px 2px 0; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border2); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); }
 footer { padding: 4px 16px 14px; color: var(--dim); font-size: 12px; }
+.live-only { display: none !important; }
+body.live .live-only { display: revert !important; }
+body.live .replay-only { display: none !important; }
+.btn.danger { border-color: #6b2a31; color: #ff9aa2; }
+.btn.danger:hover { border-color: var(--bad); }
+.btn.sm { padding: 3px 7px; font-size: 12px; border-radius: 6px; }
+.btn:disabled { opacity: 0.45; cursor: wait; }
+.ctl-grid { display: grid; grid-template-columns: auto repeat(4, 1fr); gap: 5px 6px; align-items: center; font-size: 12.5px; margin-bottom: 8px; }
+.ctl-grid .who { font-family: var(--mono); color: var(--muted); }
+.ctl-row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.ctl-row .btn { flex: 1; }
+#live-msg { margin: 8px 0 0; font-size: 12px; color: var(--muted); min-height: 16px; }
+.conn { float: right; font-weight: 600; letter-spacing: 0; text-transform: none; }
+#golive[aria-pressed="true"] { border-color: var(--bad); color: #ffb3b8; }
+#golive[aria-pressed="true"]::before { content: "● "; color: var(--bad); }
 
 .modal { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(6, 9, 13, 0.55); backdrop-filter: blur(2px); padding: 16px; }
 .modal.hidden { display: none; }
@@ -110,14 +125,15 @@ footer { padding: 4px 16px 14px; color: var(--dim); font-size: 12px; }
     <small>deterministic replays of a Raft cluster under faults · <a id="repo" href="https://github.com/iamvinbas/raft-chaos">source</a></small>
   </div>
   <div class="controls" role="toolbar" aria-label="Playback">
-    <button class="btn primary" id="play" title="Play or pause (space)">Play</button>
-    <button class="btn" id="restart" title="Restart (R)">Restart</button>
+    <button class="btn live-only" id="golive" aria-pressed="true" title="Follow the cluster in real time">Live</button>
+    <button class="btn primary replay-only" id="play" title="Play or pause (space)">Play</button>
+    <button class="btn replay-only" id="restart" title="Restart (R)">Restart</button>
     <button class="btn" id="prev" title="Previous event (←)">◀ Event</button>
     <button class="btn" id="next" title="Next event (→)">Event ▶</button>
-    <div class="seg" id="speeds" role="group" aria-label="Speed"></div>
+    <div class="seg replay-only" id="speeds" role="group" aria-label="Speed"></div>
     <button class="btn" id="hb" aria-pressed="true" title="Show heartbeats and acks (H)">Heartbeats</button>
     <button class="btn" id="cl" aria-pressed="true" title="Show client traffic (C)">Clients</button>
-    <button class="btn" id="share" title="Copy a link to this exact moment">Link</button>
+    <button class="btn replay-only" id="share" title="Copy a link to this exact moment">Link</button>
     <span class="clock" id="clock">0.000 s</span>
   </div>
 </header>
@@ -135,9 +151,9 @@ footer { padding: 4px 16px 14px; color: var(--dim); font-size: 12px; }
         <p class="msg" id="m-msg"></p>
         <p id="m-explain"></p>
         <p class="bug" id="m-bug"></p>
-        <div class="repro"><code id="m-cmd"></code><button class="btn" id="m-copy">Copy</button></div>
+        <div class="repro" id="m-repro"><code id="m-cmd"></code><button class="btn" id="m-copy">Copy</button></div>
         <div class="actions">
-          <button class="btn" id="m-replay">Replay</button>
+          <button class="btn replay-only" id="m-replay">Replay</button>
           <button class="btn primary" id="m-close">Keep exploring</button>
         </div>
       </div>
@@ -153,11 +169,24 @@ footer { padding: 4px 16px 14px; color: var(--dim); font-size: 12px; }
         <dt>Phase</dt><dd id="n-phase">-</dd>
       </dl>
     </section>
+    <section class="panel live-only" id="live-panel">
+      <h3>Break it <span class="conn" id="conn"></span></h3>
+      <div class="ctl-grid" id="node-ctl"></div>
+      <div class="ctl-row">
+        <button class="btn danger" data-act="kill_leader">Kill the leader</button>
+        <button class="btn" data-act="heal">Heal network</button>
+      </div>
+      <div class="ctl-row">
+        <button class="btn" id="load-btn" data-act="load_start">Start load</button>
+        <button class="btn" data-act="check">Check history</button>
+      </div>
+      <p id="live-msg"></p>
+    </section>
     <section class="panel events">
       <h3>Events</h3>
       <ol id="log"></ol>
     </section>
-    <section class="panel">
+    <section class="panel replay-only" id="legend">
       <h3>Legend</h3>
       <div class="legend">
         <span><i class="sw" style="background:var(--leader)"></i>leader</span>
@@ -384,7 +413,7 @@ function drawLinks(net) {
     ctx.save();
     ctx.lineWidth = cut ? 2 : 1.5;
     if (cut) { ctx.strokeStyle = C.bad; ctx.setLineDash([7, 6]); ctx.globalAlpha = 0.85; }
-    else if (net.drop >= 0.1) { ctx.strokeStyle = C.candidate; ctx.setLineDash([2, 5]); ctx.globalAlpha = 0.7; }
+    else if (net.drop >= 0.1 || (net.slow && (net.slow.includes(a) || net.slow.includes(b)))) { ctx.strokeStyle = C.candidate; ctx.setLineDash([2, 5]); ctx.globalAlpha = 0.7; }
     else { ctx.strokeStyle = C.border2; ctx.globalAlpha = 0.9; }
     ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
     if (cut) {
@@ -580,6 +609,10 @@ function drawBanner(net) {
     text = "partition  " + Object.values(sides).map((s) => `{${s.join(", ")}}`).join("  |  ");
     color = C.bad;
   } else if (net.drop >= 0.1) { text = `lossy network: ${Math.round(net.drop * 100)}% of messages dropped`; color = C.candidate; }
+  if (net.slow && net.slow.length) {
+    const s = `node ${net.slow.join(", ")}: 150 ms delay, 15% loss`;
+    text = net.groups ? `${text}  ·  ${s}` : s; color = net.groups ? color : C.candidate;
+  }
   if (t >= P.sc.duration) { text = net.groups || net.drop >= 0.1 ? text : "faults stopped: cluster must converge"; }
   ctx.save();
   ctx.font = font(12, 600);
@@ -629,7 +662,8 @@ function buildTrack() {
   ctx.fillRect(trackX(Math.min(P.sc.duration, P.end)), TRACK.top - 4, trackX(P.end) - trackX(Math.min(P.sc.duration, P.end)), y - TRACK.top);
   // grid + axis
   ctx.font = font(10.5, 500, true); ctx.fillStyle = C.dim; ctx.textAlign = "center";
-  for (let s = 0; s <= P.end; s += 1000) {
+  const step = [1000, 2000, 5000, 10000, 30000, 60000, 300000].find((x) => P.end / x <= 14) || 600000;
+  for (let s = 0; s <= P.end; s += step) {
     const x = trackX(s);
     ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, TRACK.top - 4); ctx.lineTo(x, y); ctx.stroke();
     ctx.fillText(`${s / 1000}s`, x, y + 12);
@@ -706,9 +740,10 @@ function buildLog() {
   currentEvent = -2;
 }
 function updateLog() {
+  const items = logEl.children;
+  if (items.length !== P.events.length) return;  // live mode: the list is rebuilt shortly
   const idx = bisect(P.events, t, (e) => e.t);
   if (idx === currentEvent) return;
-  const items = logEl.children;
   for (let j = 0; j < items.length; j++) {
     items[j].classList.toggle("past", j <= idx);
     items[j].classList.toggle("current", j === idx);
@@ -728,15 +763,20 @@ function updatePanel() {
   const net = netAt(t);
   const netText = net.groups ? "partitioned" : net.drop >= 0.1 ? `${Math.round(net.drop * 100)}% loss` : "healthy";
   const ok = countUpTo(P.okTimes, t), rej = countUpTo(P.rejectTimes, t), to = countUpTo(P.timeoutTimes, t);
-  const phase = P.sc.violation && t >= P.sc.violation.time ? "invariant broken" : t < P.sc.duration ? "faults + load" : "settle: must converge";
-  const key = [leader && leader.i, leader && leader.term, netText, ok, rej, to, phase].join("|");
+  let phase = P.sc.violation && t >= P.sc.violation.time ? "invariant broken" : t < P.sc.duration ? "faults + load" : "settle: must converge";
+  if (LIVE) phase = follow ? "live" : "reviewing the past";
+  const load = LIVE && lastSnap ? lastSnap.load : null;
+  const netLive = LIVE ? [net.slow && net.slow.length ? "slowed" : ""].filter(Boolean) : [];
+  const loadText = load ? (load.running ? `${load.ok} ok · ${load.unknown} unknown · ${load.rate}/s${load.p99_ms !== null ? ` · p99 ${load.p99_ms} ms` : ""}` : `idle (${load.ok} ok so far)`) : null;
+  const key = [leader && leader.i, leader && leader.term, netText, ok, rej, to, phase, loadText, netLive].join("|");
   if (key === lastPanel) return;
   lastPanel = key;
   $("n-leader").textContent = leader ? `node ${leader.i} · term ${leader.term}` : "none (election)";
   $("n-leader").style.color = leader ? C.leader : C.candidate;
   $("n-net").textContent = netText;
   $("n-net").style.color = net.groups ? C.bad : net.drop >= 0.1 ? C.candidate : C.text;
-  $("n-ops").textContent = `${ok} ok · ${rej} rejected · ${to} timed out`;
+  $("n-ops").textContent = loadText || `${ok} ok · ${rej} rejected · ${to} timed out`;
+  if (netLive.length && !net.groups) { $("n-net").textContent = "slowed"; $("n-net").style.color = C.candidate; }
   $("n-phase").textContent = phase;
   $("n-phase").style.color = phase === "invariant broken" ? C.bad : C.text;
 }
@@ -781,6 +821,7 @@ function setPlaying(on) {
   $("play").textContent = on ? "Pause" : t >= P.end ? "Replay" : "Play";
 }
 function seek(time) {
+  if (LIVE) { follow = false; $("golive").setAttribute("aria-pressed", "false"); $("golive").textContent = "Back to live"; }
   t = Math.max(0, Math.min(P.end, time));
   if (P.sc.violation && t < P.sc.violation.time) modalShownFor = null;
   if (!P.sc.violation && t < P.end) modalShownFor = null;
@@ -818,7 +859,8 @@ toggle("hb", () => showHeartbeats, (v) => (showHeartbeats = v));
 toggle("cl", () => showClients, (v) => (showClients = v));
 document.addEventListener("keydown", (e) => {
   if (e.target.closest && e.target.closest("button, select, input")) { if (e.key !== " ") return; }
-  if (e.key === " ") { e.preventDefault(); $("play").click(); }
+  if (e.key === " " && LIVE) { e.preventDefault(); $("golive").click(); }
+  else if (e.key === " ") { e.preventDefault(); $("play").click(); }
   else if (e.key === "ArrowRight") jumpEvent(1);
   else if (e.key === "ArrowLeft") jumpEvent(-1);
   else if (e.key === "r" || e.key === "R") $("restart").click();
@@ -864,17 +906,195 @@ DATA.scenarios.forEach((sc, idx) => {
 });
 if (DATA.scenarios.length < 2) chips.style.display = "none";
 
+// ---- live mode ----------------------------------------------------------------------------
+// The page talks to `raftchaos live`, which polls the real nodes. Node state is exact; the
+// dots are drawn from per-link frame counters, so they show traffic volume, not single messages.
+const LIVE = DATA.live || null;
+const LIVE_LAG = 300;  // draw slightly behind real time so each poll's traffic can be animated
+let follow = true, liveBase = null, lastSnap = null, eventCursor = 0;
+let lastTrackBuild = 0, lastLogBuild = 0, logDirty = false, lastCheck = "idle";
+let origin = null;  // bridge time when this page connected: the page's time zero
+function liveNow() { return liveBase ? liveBase.t + (performance.now() - liveBase.at) : 0; }
+
+function startLive() {
+  document.body.classList.add("live");
+  speed = 1;
+  const n = LIVE.nodes;
+  const sc = { title: "Live cluster", key: "live", seed: "-", bug: null, profile: "live", nodes: n,
+    clients: LIVE.clients, duration: Infinity, end: 1, violation: null, reproduce: "", messages: [],
+    states: [], network: [], faults: [], ops: [], client_timeout: 0 };
+  P = { sc, n, end: 1, states: Array.from({ length: n }, () => []),
+    network: [{ t: 0, groups: null, drop: 0, slow: [] }], maxWindow: 200,
+    okTimes: [], timeoutTimes: [], rejectTimes: [], events: [], involved: new Set() };
+  $("about").innerHTML = "<b>Live cluster.</b> Each server is a real process in Docker, polled every 100 ms. " +
+    "Break it with the buttons on the right: <code>kill -9</code>, an <code>iptables</code> partition, " +
+    "<code>tc netem</code> latency and loss. Dots show the real traffic on each link, sampled, not individual messages.";
+  $("footer").textContent = "live mode · served by raftchaos live · actions run docker compose on this machine";
+  const grid = $("node-ctl");
+  for (let i = 0; i < n; i++) {
+    const who = document.createElement("span"); who.className = "who"; who.textContent = `node ${i}`;
+    grid.appendChild(who);
+    for (const [act, label, cls] of [["kill", "Kill", "danger"], ["restart", "Restart", ""], ["isolate", "Isolate", ""], ["slow", "Slow", ""]]) {
+      const b = document.createElement("button");
+      b.className = `btn sm ${cls}`; b.textContent = label; b.dataset.act = act; b.dataset.node = String(i);
+      grid.appendChild(b);
+    }
+  }
+  document.querySelectorAll("#live-panel [data-act]").forEach((b) => b.addEventListener("click", () => act(b)));
+  $("golive").onclick = () => { follow = true; $("golive").setAttribute("aria-pressed", "true"); $("golive").textContent = "Live"; hideModal(); };
+  computeLayout(); buildTrack(); buildLog();
+  poll();
+}
+
+async function act(button) {
+  let action = button.dataset.act;
+  if (action === "load_start" && lastSnap && lastSnap.load.running) action = "load_stop";
+  const body = { action };
+  if (button.dataset.node !== undefined) body.node = +button.dataset.node;
+  const buttons = document.querySelectorAll("#live-panel button");
+  buttons.forEach((b) => (b.disabled = true));
+  $("live-msg").textContent = "running…";
+  try {
+    const r = await fetch("/api/action", { method: "POST", headers: { "Content-Type": "application/json", "X-Token": LIVE.token }, body: JSON.stringify(body) });
+    const out = await r.json();
+    $("live-msg").textContent = out.result === "ok" ? "" : out.result;
+  } catch (e) { $("live-msg").textContent = "the bridge did not answer"; }
+  finally { buttons.forEach((b) => (b.disabled = false)); }
+}
+
+function addEvent(time, text, color, minor = false, violation = false) {
+  P.events.push({ t: time, text, color, minor, violation });
+  P.events.sort((a, b) => a.t - b.t);
+  logDirty = true;
+}
+const KIND_COLOR = { crash: C.bad, partition: C.bad, error: C.bad, violation: C.bad, flaky: C.candidate, heal: C.leader, check: C.leader, load: C.client, restart: C.muted };
+
+async function poll() {
+  try {
+    const r = await fetch(`/api/snapshot?since=${eventCursor}`, { headers: { "X-Token": LIVE.token }, cache: "no-store" });
+    if (!r.ok) throw new Error(String(r.status));
+    ingest(await r.json());
+    $("conn").textContent = "connected"; $("conn").style.color = C.leader;
+  } catch (e) {
+    $("conn").textContent = "bridge offline"; $("conn").style.color = C.bad;
+  }
+  setTimeout(poll, LIVE.poll_ms);
+}
+
+function ingest(raw) {
+  if (origin === null) origin = raw.t;
+  // Shift every timestamp so the page's timeline starts when it connected.
+  const s = { ...raw, t: raw.t - origin, events: raw.events.map((e) => ({ ...e, t: e.t - origin })).filter((e) => e.t >= 0) };
+  const prev = lastSnap;
+  liveBase = { t: s.t, at: performance.now() };
+  P.end = Math.max(P.end, s.t);
+  s.nodes.forEach((nd, i) => {
+    const rows = P.states[i];
+    const row = nd.up
+      ? { t: s.t, role: nd.role, term: nd.term, commit: nd.commit_index, last: nd.log_entries, voted: nd.voted_for ?? null, tail: nd.log_tail || [] }
+      : { t: s.t, role: "down", term: 0, commit: 0, last: 0, voted: null, tail: [] };
+    const last = rows[rows.length - 1];
+    if (last && last.role === row.role && last.term === row.term && last.commit === row.commit && last.last === row.last && last.voted === row.voted && last.tail.join() === row.tail.join()) return;
+    row.since = last && last.role === row.role && last.term === row.term ? last.since : row.t;
+    rows.push(row);
+    if (last && (last.role !== row.role || last.term !== row.term)) {
+      if (row.role === "leader") addEvent(row.t, `node ${i} becomes leader of term ${row.term}`, C.leader);
+      else if (row.role === "candidate") addEvent(row.t, `node ${i} starts an election (term ${row.term})`, C.candidate, true);
+      else if (row.role === "down") addEvent(row.t, `node ${i} stops answering`, C.bad);
+      else if (last.role === "down") addEvent(row.t, `node ${i} is back, term ${row.term}`, C.muted);
+    } else if (!last && row.role === "leader") addEvent(row.t, `node ${i} is leader of term ${row.term}`, C.leader);
+  });
+  // network state as injected by the bridge: each isolated node is its own side
+  const groups = s.isolated.length ? s.nodes.map((_, i) => (s.isolated.includes(i) ? 1 + i : 0)) : null;
+  const lastNet = P.network[P.network.length - 1];
+  if (JSON.stringify([groups, s.slow]) !== JSON.stringify([lastNet.groups, lastNet.slow])) {
+    P.network.push({ t: s.t, groups, drop: 0, slow: s.slow });
+  }
+  // bridge events (faults, load, checks)
+  for (const e of s.events) addEvent(e.t, e.text, KIND_COLOR[e.kind] || C.muted, false, e.kind === "violation");
+  eventCursor = s.event_count;
+  // traffic dots from frame counter deltas
+  if (prev) synthesize(prev, s);
+  lastSnap = s;
+  // history check finished
+  const status = s.check.status;
+  if (status !== lastCheck && (status === "ok" || status === "violation")) showCheck(s.check);
+  lastCheck = status;
+  $("load-btn").textContent = s.load.running ? "Stop load" : "Start load";
+}
+
+function synthesize(prev, s) {
+  const msgs = P.sc.messages;
+  const t0 = prev.t, dt = Math.max(1, s.t - prev.t);
+  const leader = s.nodes.find((n) => n.up && n.role === "leader");
+  s.nodes.forEach((a, i) => {
+    const pa = prev.nodes[i];
+    if (!a.up || !pa.up || !a.peers || !pa.peers) return;
+    const grew = Math.max(0, a.log_entries - pa.log_entries);
+    for (const [key, link] of Object.entries(a.peers)) {
+      const j = +key;
+      const before = pa.peers[key] ? pa.peers[key].out : link.out;
+      const d = Math.min(3, Math.max(0, link.out - before));
+      const cut = s.isolated.includes(i) || s.isolated.includes(j);
+      const slow = s.slow.includes(i) || s.slow.includes(j);
+      let kind = "PV", info = 0;
+      if (a.role === "leader") { kind = "AE"; info = grew; }
+      else if (a.role === "candidate") kind = "RV";
+      else if (leader && j === leader.id) { kind = "AER"; info = 1; }
+      for (let k = 0; k < d; k++) {
+        const ts = t0 + ((k + 0.5) * dt) / d;
+        const lost = cut ? 2 : slow && Math.random() < 0.15 ? 1 : 0;
+        msgs.push([ts, i, j, kind, k === 0 ? info : 0, ts + (slow ? 160 : 25), lost]);
+      }
+    }
+  });
+  const done = Math.min(4, Math.max(0, s.load.ok - prev.load.ok));
+  if (leader && s.load.running) {
+    for (let k = 0; k < done; k++) {
+      const ts = t0 + ((k + 0.5) * dt) / Math.max(done, 1), c = `c${k % LIVE.clients}`;
+      msgs.push([ts, c, leader.id, "REQ", "op", ts + 30, 0]);
+      msgs.push([ts + 40, leader.id, c, "RES", 1, ts + 70, 0]);
+    }
+  }
+  msgs.sort((x, y) => x[0] - y[0]);
+  const keepFrom = s.t - 8000;
+  let cut = 0;
+  while (cut < msgs.length && msgs[cut][0] < keepFrom) cut++;
+  if (cut) msgs.splice(0, cut);
+}
+
+function showCheck(check) {
+  const ok = check.status === "ok";
+  modal.classList.toggle("ok", ok);
+  $("m-tag").textContent = "History check";
+  $("m-title").textContent = ok ? "Linearizable" : "Not linearizable";
+  $("m-msg").style.display = "";
+  $("m-msg").textContent = ok ? `${check.ops} acknowledged operations, every read consistent with one order of writes`
+                              : `history of key ${check.key} cannot be explained by any order of operations`;
+  $("m-explain").textContent = ok
+    ? "The clients' puts and gets since the load started were checked with the same linearizability checker the simulator uses. Faults you injected cost availability, not correctness."
+    : INVARIANTS.linearizability[1];
+  $("m-bug").style.display = "none";
+  $("m-repro").style.display = "none";
+  modal.classList.remove("hidden");
+}
+
 // ---- main loop ----------------------------------------------------------------------------
 function frame(now) {
   const dt = Math.min(100, now - lastFrame);
   lastFrame = now;
-  if (playing && P) {
+  if (LIVE && P) {
+    if (liveBase) P.end = Math.max(P.end, liveNow());
+    if (follow) t = Math.max(0, liveNow() - LIVE_LAG);
+    if (now - lastTrackBuild > 1000) { buildTrack(); lastTrackBuild = now; }
+    if (logDirty && now - lastLogBuild > 300) { buildLog(); currentEvent = -2; logDirty = false; lastLogBuild = now; }
+  } else if (playing && P) {
     t += dt * speed;
     const v = P.sc.violation;
     if (v && t >= v.time && modalShownFor !== P.sc) { t = v.time; setPlaying(false); showModal(); }
     if (t >= P.end) { t = P.end; setPlaying(false); if (!v && modalShownFor !== P.sc) showModal(); }
   }
-  if (P) {
+  if (P && (!LIVE || P.states[0].length)) {
     drawStage(now);
     drawTrack(hoverX);
     updateLog();
@@ -886,6 +1106,8 @@ function frame(now) {
 new ResizeObserver(() => { if (P) { computeLayout(); buildTrack(); } }).observe($("stage-wrap"));
 window.addEventListener("resize", () => { if (P) { computeLayout(); buildTrack(); } });
 
+if (LIVE) { startLive(); requestAnimationFrame(frame); }
+else {
 // A link such as #double-vote@7000 opens that scenario paused at 7.0 s.
 const [hashKey, hashAt] = location.hash.slice(1).split("@");
 const fromHash = DATA.scenarios.findIndex((s) => s.key === hashKey);
@@ -897,6 +1119,7 @@ if (hashAt && !Number.isNaN(+hashAt)) {
   setTimeout(() => { if (!playing && t === 0) setPlaying(true); }, 700);
 }
 requestAnimationFrame(frame);
+}
 </script>
 </body>
 </html>

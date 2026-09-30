@@ -18,7 +18,7 @@ from raftchaos.messages import (
     RequestVoteReply,
 )
 from raftchaos.node import Role
-from raftchaos.runtime.client import KvClient, fetch_status
+from raftchaos.runtime.client import KvClient, Unavailable, fetch_status
 from raftchaos.runtime.codec import decode, encode
 from raftchaos.runtime.server import NodeServer
 from raftchaos.runtime.storage import FileStorage
@@ -256,6 +256,64 @@ def test_real_cluster_history_is_linearizable(tmp_path):
             report = await run_verify(nodes, seconds=2.0, clients=3, seed=1)
             assert report.ok, report
             assert report.ops_ok > 10
+        finally:
+            await asyncio.gather(*(s.stop() for s in servers), return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_client_ignores_a_late_reply_to_an_older_request():
+    # A node may answer a request the client already gave up on, on the connection the client
+    # opened for its next request. That stale reply must not be taken as the new answer.
+    async def scenario():
+        async def server(reader, writer):
+            line = await reader.readline()
+            _, request = decode(line)
+            stale = ClientResponse(request.req_id - 1, True, "stale value", 0)
+            writer.write(encode(0, stale))
+            writer.write(encode(0, ClientResponse(request.req_id, True, "fresh value", 0)))
+            await writer.drain()
+            writer.close()
+
+        srv = await asyncio.start_server(server, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        client = KvClient([("127.0.0.1", port)])
+        client._req_id = 7  # as if earlier requests existed
+        try:
+            assert await client.get("k", 2.0) == "fresh value"
+        finally:
+            srv.close()
+            await srv.wait_closed()
+
+    asyncio.run(scenario())
+
+
+def test_late_commit_of_an_abandoned_put_does_not_answer_a_later_get(tmp_path):
+    # The leader loses its followers, a put times out on the client, the client moves on to a
+    # get of another key. When the followers return, the leader commits the old put and replies
+    # to it on the connection the client opened for the get. The get must still read its key.
+    async def scenario():
+        addresses, servers, _ = await start_cluster(tmp_path)
+        try:
+            await wait_for(lambda: leader_of(servers) is not None)
+            leader = leader_of(servers)
+            followers = [s for s in servers if s is not leader]
+            for f in followers:
+                await f.stop()
+            client = KvClient([addresses[leader.id]])
+            try:
+                await client.put("k", "late", 0.4)
+            except Unavailable:
+                pass
+            else:
+                raise AssertionError("put should not commit without a majority")
+            pending_get = asyncio.create_task(client.get("other", 5.0))
+            await asyncio.sleep(0.1)
+            reborn = [NodeServer(f.id, addresses, tmp_path) for f in followers]
+            for r in reborn:
+                await r.start()
+            servers[:] = [leader, *reborn]
+            assert await pending_get is None  # "other" was never written
         finally:
             await asyncio.gather(*(s.stop() for s in servers), return_exceptions=True)
 

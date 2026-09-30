@@ -289,6 +289,33 @@ def cmd_experiment(args: argparse.Namespace) -> int:
     return 0 if all(s.safe == s.runs for s in summaries) else 1
 
 
+def cmd_live(args: argparse.Namespace) -> int:
+    import asyncio
+    import logging
+    import webbrowser
+    from pathlib import Path
+
+    from .live.bridge import Bridge, LiveServer
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    compose = None if args.no_faults else Path(args.compose).resolve()
+    if compose is not None and not compose.exists():
+        raise SystemExit(f"{compose} not found; pass --compose or --no-faults")
+    if len(args.nodes) != len(args.metrics):
+        raise SystemExit("--nodes and --metrics must list the same number of nodes")
+    bridge = Bridge(args.nodes, args.metrics, compose)
+    server = LiveServer(bridge, "127.0.0.1", args.port)
+    url = f"http://127.0.0.1:{args.port}/"
+    print(f"live view on {url} (Ctrl+C to stop)")
+    if args.open:
+        webbrowser.open(url)
+    try:
+        asyncio.run(server.serve())
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def cmd_bugs(_args: argparse.Namespace) -> int:
     print("\n".join(BUG_NAMES))
     return 0
@@ -385,6 +412,25 @@ def build_parser() -> argparse.ArgumentParser:
     viz.add_argument("--duration", type=int, help="milliseconds of load and faults")
     viz.add_argument("--open", action="store_true", help="open the page in a browser")
     viz.set_defaults(func=cmd_viz)
+
+    live = sub.add_parser("live", help="watch and break a running cluster in the browser")
+    live.add_argument(
+        "--nodes",
+        type=_parse_nodes,
+        default="127.0.0.1:7100,127.0.0.1:7101,127.0.0.1:7102",
+        help="client host:port of every node, ordered by id (default: the compose cluster)",
+    )
+    live.add_argument(
+        "--metrics",
+        type=_parse_nodes,
+        default="127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102",
+        help="metrics host:port of every node, same order",
+    )
+    live.add_argument("--compose", default="docker-compose.yml", help="compose file for faults")
+    live.add_argument("--no-faults", action="store_true", help="watch only, no fault buttons")
+    live.add_argument("--port", type=int, default=8080)
+    live.add_argument("--open", action="store_true", help="open the page in a browser")
+    live.set_defaults(func=cmd_live)
 
     experiment = sub.add_parser("experiment", help="controlled experiments")
     experiment.add_argument("name", choices=("prevote",))
