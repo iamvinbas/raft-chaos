@@ -166,7 +166,8 @@ raftchaos bugs                            # list injectable bugs
 
 Useful flags: `--nodes N` (cluster size), `--duration MS`, `--history` (print the client
 operation history), `--jobs N` (parallel worker processes for `hunt`),
-`--profile adversarial` (targeted faults, see below).
+`--profile adversarial` (targeted faults, see below), `--pre-vote`, and `--snapshot-every N`
+(compact the log into a snapshot every N applied entries).
 
 ### A clean run
 
@@ -357,6 +358,7 @@ flowchart LR
 | **Seed** | The integer that fixes every random choice in a run, so a failure can be replayed exactly. |
 | **Deterministic simulation** | Running the system on a virtual clock and a fake network, so runs are fast and reproducible. |
 | **PreVote** | An extra round before an election: a node first asks whether it *would* get votes, without changing anyone's term. A node that cannot win never disturbs the others. |
+| **Snapshot** | The applied state up to some log index, saved so that the log before it can be deleted. A node too far behind receives the snapshot instead of the entries it missed. |
 | **SLO and error budget** | A reliability target (for example 90% availability) and the share of allowed failure a run has used. |
 
 ## Determinism: same seed, same run
@@ -430,7 +432,8 @@ raft-chaos/
 │   ├── invariants.py      # Election Safety, Leader Completeness, Log Matching, SM Safety
 │   ├── linearizability.py # Wing and Gong style history checker
 │   ├── workload.py        # concurrent clients producing the history
-│   ├── bugs.py            # the 6 injectable protocol bugs
+│   ├── bugs.py            # the 8 injectable bugs (6 protocol, 2 snapshot)
+│   ├── statemachine.py    # the key-value store, its sessions and its snapshots
 │   ├── metrics.py         # latency, availability, outage; Prometheus text format
 │   ├── slo.py             # SLOs and error-budget accounting
 │   ├── anomaly.py         # robust z-score detector, fault attribution
@@ -471,22 +474,24 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 
 **Current limitations**
 
-- No log compaction or snapshots, and no cluster membership changes.
+- No cluster membership changes: servers cannot be added or removed while the cluster runs.
+  Joint consensus is the most intricate part of Raft and was left out on purpose.
+- Snapshots are sent whole and re-sent with every heartbeat until the follower acknowledges one.
+  That is fine for this small store; production systems send them in chunks and back off.
 - The simulator uses a simulated network. The real runtime was run on localhost and once in
   Docker on macOS; the Docker chaos script is not part of CI.
-- PreVote is on by default in the real runtime and off by default in the simulator, so the
-  published seeds stay reproducible. `--pre-vote` turns it on in any simulator command.
+- PreVote and snapshots are on by default in the real runtime (a snapshot every 1000 entries)
+  and off by default in the simulator, so the published seeds stay reproducible.
+  `--pre-vote` and `--snapshot-every N` turn them on in any simulator command.
 - No authentication or TLS on the node ports.
 - The default profile misses two of the six planted bugs; use `--profile adversarial`.
 - Single-key operations only; the linearizability checker is exponential in the worst case.
 
 **Done since the first release:** Prometheus metrics, SLO report, anomaly detection, SVG
 timelines, a real TCP runtime with durable storage, a linearizability check of a live cluster,
-an interactive visualiser with a live mode, and PreVote.
+an interactive visualiser with a live mode, PreVote, and snapshots with InstallSnapshot.
 
-**Planned**
-
-- [ ] Snapshots and cluster membership changes
+**Left out on purpose:** cluster membership changes (see above).
 
 ## References
 

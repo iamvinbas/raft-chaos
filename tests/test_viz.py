@@ -60,6 +60,7 @@ def test_html_embeds_data_safely():
 
 def test_published_demo_page_is_up_to_date():
     page = ROOT / "docs" / "viz" / "index.html"
-    assert page.read_text(encoding="utf-8") == demo_html(), (
-        "docs/viz/index.html is stale: run `raftchaos viz --out docs/viz/index.html`"
-    )
+    # Compare to a bool first: a failing == on two large strings makes pytest compute a diff
+    # of hundreds of kilobytes, which takes minutes.
+    up_to_date = page.read_text(encoding="utf-8") == demo_html()
+    assert up_to_date, "docs/viz/index.html is stale: run `raftchaos viz --out docs/viz/index.html`"

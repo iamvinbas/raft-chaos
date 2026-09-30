@@ -22,6 +22,11 @@ class Bugs:
     no_truncate_on_conflict: bool = False
     # Node forgets its vote after a restart (voted_for is not persisted).
     forget_vote_on_restart: bool = False
+    # Snapshots leave out the client sessions, so deduplication is lost after a restore.
+    snapshot_without_sessions: bool = False
+    # A follower that receives a snapshot throws away its whole log and state, even when its log
+    # already goes past the snapshot (Raft paper, Figure 13, step 6 skipped).
+    install_snapshot_discards_log: bool = False
 
     @classmethod
     def only(cls, name: str) -> Bugs:
@@ -31,3 +36,10 @@ class Bugs:
 
 
 BUG_NAMES: tuple[str, ...] = tuple(f.name for f in fields(Bugs))
+
+# Bugs that live in snapshot code: they can only show up when snapshots are turned on.
+SNAPSHOT_BUGS: frozenset[str] = frozenset(
+    {"snapshot_without_sessions", "install_snapshot_discards_log"}
+)
+# How often those bug hunts take a snapshot when the caller did not choose.
+DEFAULT_SNAPSHOT_EVERY = 20

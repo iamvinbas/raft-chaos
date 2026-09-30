@@ -12,7 +12,7 @@
   --bg: #0b0f14; --panel: #11161d; --panel2: #161d26; --border: #243041; --border2: #2f3d52;
   --text: #e6edf3; --muted: #8b98a9; --dim: #5c6878;
   --leader: #3fb950; --follower: #3b4658; --candidate: #e3a33a; --down: #7a2530;
-  --vote: #f0b54a; --append: #3fb950; --client: #58a6ff; --bad: #f85149; --accent: #7c9cff;
+  --vote: #f0b54a; --append: #3fb950; --client: #58a6ff; --bad: #f85149; --accent: #7c9cff; --snap: #b392f0;
   --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -202,6 +202,7 @@ body.no-faults #watch-only { display: block; }
         <span><i class="swd" style="background:var(--append)"></i>log entries</span>
         <span><i class="swd" style="background:#56657a"></i>heartbeat / ack</span>
         <span><i class="swd" style="background:var(--client)"></i>client request</span>
+        <span><i class="swd" style="background:var(--snap)"></i>snapshot</span>
         <span><i class="swd" style="background:var(--bad)"></i>message lost</span>
         <span><i class="sw" style="background:repeating-linear-gradient(90deg,var(--bad) 0 4px,transparent 4px 7px)"></i>partitioned link</span>
       </div>
@@ -229,14 +230,14 @@ const C = {
   bg: css("--bg"), panel: css("--panel"), panel2: css("--panel2"), border: css("--border"), border2: css("--border2"),
   text: css("--text"), muted: css("--muted"), dim: css("--dim"),
   leader: css("--leader"), follower: css("--follower"), candidate: css("--candidate"), down: css("--down"),
-  vote: css("--vote"), append: css("--append"), client: css("--client"), bad: css("--bad"), accent: css("--accent"),
+  vote: css("--vote"), append: css("--append"), client: css("--client"), bad: css("--bad"), accent: css("--accent"), snap: css("--snap"),
   heart: "#56657a", mono: css("--mono"), sans: css("--sans"),
 };
 const ROLE_COLOR = { leader: C.leader, follower: C.follower, candidate: C.candidate, down: C.down };
 const INVARIANTS = {
   "election-safety": ["Election Safety", "Raft allows at most one leader per term. Two leaders in the same term can each accept writes, and the cluster's copies of the data start to diverge."],
   "leader-completeness": ["Leader Completeness", "A newly elected leader must already hold every committed entry. This leader is missing one, so data the clients were told is safe can be lost."],
-  "state-machine-safety": ["State Machine Safety", "Every server must apply the same command at the same log position. Two servers applied different commands at the same position, so their data now differs."],
+  "state-machine-safety": ["State Machine Safety", "Every server must apply the same commands in the same order, and its data, including any snapshot it takes or installs, must match the committed history. Here a server's log or data diverged from it."],
   "log-matching": ["Log Matching", "If two logs contain an entry with the same index and term, all earlier entries must match too. Here they do not."],
   "liveness": ["Liveness", "Once the network healed and every server was back, the cluster had to elect a leader and bring every server up to date. It did not."],
   "linearizability": ["Linearizability", "The clients saw results that no single order of operations can explain, for example a read that returned a value it could not have seen."],
@@ -248,6 +249,8 @@ const BUGS = {
   commit_old_term: "The leader commits an entry from an earlier term by counting replicas, the trap in Figure 8 of the Raft paper.",
   no_truncate_on_conflict: "A follower keeps conflicting log entries instead of deleting them.",
   forget_vote_on_restart: "A server does not save its vote to disk, so after a crash it can vote again in the same term.",
+  snapshot_without_sessions: "Snapshots leave out the client sessions, so after a restore the server can apply a duplicated request twice.",
+  install_snapshot_discards_log: "A follower that receives a snapshot throws away its whole log, even entries past the snapshot that it had already acknowledged.",
 };
 const FATE = { DELIVERED: 0, LOST: 1, CUT: 2, CUT_IN_FLIGHT: 3, DOWN: 4 };
 
@@ -275,8 +278,8 @@ function countUpTo(sorted, time) { return bisect(sorted, time, (x) => x) + 1; }
 function prepare(sc) {
   const states = sc.states.map((rows) => {
     const out = rows.map((r) => r[1] === "down"
-      ? { t: r[0], role: "down", term: 0, commit: 0, last: 0, voted: null, tail: [] }
-      : { t: r[0], role: r[1], term: r[2], commit: r[3], last: r[4], voted: r[5], tail: r[6] });
+      ? { t: r[0], role: "down", term: 0, commit: 0, last: 0, voted: null, tail: [], snap: 0 }
+      : { t: r[0], role: r[1], term: r[2], commit: r[3], last: r[4], voted: r[5], tail: r[6], snap: r[7] || 0 });
     for (let i = 0; i < out.length; i++) {
       const prev = out[i - 1];
       out[i].since = prev && prev.role === out[i].role && prev.term === out[i].term ? prev.since : out[i].t;
@@ -322,6 +325,10 @@ function prepare(sc) {
     if (r.role === "leader") events.push({ t: r.t, text: `node ${i} becomes leader of term ${r.term}`, color: C.leader });
     else if (r.role === "candidate") events.push({ t: r.t, text: `node ${i} starts an election (term ${r.term})`, color: C.candidate, minor: true });
   }));
+  for (const [time, node, index, how] of sc.snapshots || []) {
+    if (how === "install") events.push({ t: time, text: `node ${node} installs the leader's snapshot up to #${index}`, color: C.snap });
+    else events.push({ t: time, text: `node ${node} compacts its log up to #${index}`, color: C.snap, minor: true });
+  }
   if (sc.violation) events.push({ t: sc.violation.time, text: `${(INVARIANTS[sc.violation.kind] || [sc.violation.kind])[0]} violated`, color: C.bad, violation: true });
   events.sort((a, b) => a.t - b.t || (a.violation ? 1 : 0) - (b.violation ? 1 : 0));
 
@@ -363,7 +370,7 @@ function sizeCanvas(canvas, ctx) {
 function computeLayout() {
   const { w, h } = sizeCanvas(stage, sctx);
   const k = Math.max(0.72, Math.min(1.2, Math.min(w, h) / 560));
-  const cw = 176 * k, ch = 118 * k;
+  const cw = 176 * k, ch = 128 * k;
   const clientCol = w > 620 ? 64 : 0;
   const cx = (w + clientCol) / 2, cy = clientCol ? h / 2 + 18 : h / 2 + 4;
   const n = P.n;
@@ -440,6 +447,8 @@ function msgStyle(m) {
     case "RVR": return m[4] ? { c: C.vote, r: 3.6, label: "yes" } : { c: C.muted, r: 3.2, label: "no" };
     case "AE": return m[4] > 0 ? { c: C.append, r: 4.6, label: m[4] > 1 ? `+${m[4]} entries` : "+1 entry" } : { c: C.heart, r: 2.5, hb: true };
     case "AER": return m[4] ? { c: C.heart, r: 2.5, hb: true } : { c: C.bad, r: 3.2, label: "mismatch" };
+    case "IS": return { c: C.snap, r: 5.6, label: `snapshot up to #${m[4]}` };
+    case "ISR": return { c: C.snap, r: 3.2, label: "installed" };
     case "REQ": return { c: C.client, r: 4.2, label: m[4], client: true };
     case "RES": return m[4] ? { c: C.client, r: 3.2, label: "ok", client: true } : { c: C.muted, r: 3.2, label: "not leader", client: true };
     default: return { c: C.muted, r: 3 };
@@ -566,11 +575,15 @@ function drawNode(i, now) {
   ctx.font = font(20 * k, 700); ctx.fillStyle = C.text;
   ctx.fillText(`term ${st.term}`, x + pad, y + 42 * k);
   ctx.font = font(11 * k, 500, true); ctx.fillStyle = C.muted;
-  ctx.fillText(`commit ${st.commit} / log ${st.last}`, x + pad, y + 62 * k);
+  ctx.fillText(`commit ${st.commit} / log ${st.last}`, x + pad, y + 61 * k);
   if (role !== "leader" && st.voted !== null && st.voted !== undefined) {
     ctx.fillStyle = C.vote;
     const who = st.voted === i ? "itself" : `node ${st.voted}`;
-    ctx.fillText(`voted for ${who}`, x + pad, y + 77 * k);
+    ctx.fillText(`voted for ${who}`, x + pad, y + 76 * k);
+  }
+  if (st.snap) {
+    ctx.fillStyle = C.snap;
+    ctx.fillText(`snapshot up to #${st.snap}`, x + pad, y + 91 * k);
   }
   // log tail: one square per entry, coloured by term, filled when committed
   const n = st.tail.length, box = 9.5 * k, gap = 2.5 * k;
@@ -996,10 +1009,10 @@ function ingest(raw) {
   s.nodes.forEach((nd, i) => {
     const rows = P.states[i];
     const row = nd.up
-      ? { t: s.t, role: nd.role, term: nd.term, commit: nd.commit_index, last: nd.log_entries, voted: nd.voted_for ?? null, tail: nd.log_tail || [] }
-      : { t: s.t, role: "down", term: 0, commit: 0, last: 0, voted: null, tail: [] };
+      ? { t: s.t, role: nd.role, term: nd.term, commit: nd.commit_index, last: nd.log_entries, voted: nd.voted_for ?? null, tail: nd.log_tail || [], snap: nd.snapshot_index || 0 }
+      : { t: s.t, role: "down", term: 0, commit: 0, last: 0, voted: null, tail: [], snap: 0 };
     const last = rows[rows.length - 1];
-    if (last && last.role === row.role && last.term === row.term && last.commit === row.commit && last.last === row.last && last.voted === row.voted && last.tail.join() === row.tail.join()) return;
+    if (last && last.role === row.role && last.term === row.term && last.commit === row.commit && last.last === row.last && last.voted === row.voted && last.snap === row.snap && last.tail.join() === row.tail.join()) return;
     row.since = last && last.role === row.role && last.term === row.term ? last.since : row.t;
     rows.push(row);
     if (last && (last.role !== row.role || last.term !== row.term)) {

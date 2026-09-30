@@ -15,11 +15,14 @@ from .messages import (
     AppendEntriesReply,
     ClientRequest,
     ClientResponse,
+    InstallSnapshot,
+    InstallSnapshotReply,
     Message,
     PreVote,
     PreVoteReply,
     RequestVote,
     RequestVoteReply,
+    Snapshot,
 )
 
 if TYPE_CHECKING:
@@ -46,6 +49,10 @@ def describe(msg: Message) -> tuple[str, object]:
         return "AE", len(msg.entries)
     if isinstance(msg, AppendEntriesReply):
         return "AER", int(msg.success)
+    if isinstance(msg, InstallSnapshot):
+        return "IS", msg.snapshot.last_index
+    if isinstance(msg, InstallSnapshotReply):
+        return "ISR", msg.match_index
     if isinstance(msg, ClientRequest):
         return "REQ", " ".join(str(part) for part in msg.command[:2])
     if isinstance(msg, ClientResponse):
@@ -59,6 +66,7 @@ class Recorder:
         self.messages: list[list[Any]] = []
         self.nodes: dict[int, list[list[Any]]] = {i: [] for i in sim.ids}
         self.network: list[list[Any]] = []
+        self.snapshots: list[list[Any]] = []  # [time, node, last index, "take" | "install"]
         self._last_node: dict[int, tuple[Any, ...]] = {}
         self._last_net: tuple[Any, ...] | None = None
 
@@ -77,6 +85,9 @@ class Recorder:
             record[5] = self.sim.now
             record[6] = fate
 
+    def on_snapshot(self, node_id: int, snap: Snapshot, how: str) -> None:
+        self.snapshots.append([self.sim.now, node_id, snap.last_index, how])
+
     def on_step(self) -> None:
         now = self.sim.now
         for i in self.sim.ids:
@@ -93,6 +104,7 @@ class Recorder:
                     node.last_index,
                     node.storage.voted_for,
                     tuple(tail),
+                    node.snap_index,
                 )
                 row = [
                     now,
@@ -102,6 +114,7 @@ class Recorder:
                     node.last_index,
                     node.storage.voted_for,
                     tail,
+                    node.snap_index,
                 ]
             if self._last_node.get(i) != state:
                 self._last_node[i] = state
@@ -153,5 +166,6 @@ class Recorder:
             "network": self.network,
             "messages": self.messages,
             "faults": faults,
+            "snapshots": self.snapshots,
             "ops": ops,
         }
