@@ -73,6 +73,10 @@ raftchaos timeline --seed 7 --out run.svg # draw the run
 raftchaos bugs                            # list injectable bugs
 ```
 
+> Every new terminal window starts without the virtual environment: run
+> `source .venv/bin/activate` again from the `raft-chaos` folder, or `raftchaos` and `pytest`
+> will be "command not found".
+
 Useful flags: `--nodes N` (cluster size), `--duration MS`, `--history` (print the client
 operation history), `--jobs N` (parallel worker processes for `hunt`),
 `--profile adversarial` (targeted faults, see below).
@@ -352,6 +356,10 @@ ruff check .       # lint
 ruff format --check .
 mypy               # strict type checking
 ```
+
+Run these from the `raft-chaos` folder with the environment active. From a parent folder,
+`pytest` collects every project below it and fails with collection errors. From anywhere:
+`.venv/bin/pytest -q tests`.
 
 CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and pull request.
 
