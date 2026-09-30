@@ -241,6 +241,29 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_viz(args: argparse.Namespace) -> int:
+    import webbrowser
+    from pathlib import Path
+
+    from .viz import Scenario, build_html, demo_html, record
+
+    if args.seed is None:
+        html = demo_html()
+        what = "demo scenarios"
+    else:
+        title = f"seed {args.seed}" + (f", bug {args.bug}" if args.bug else "")
+        scenario = Scenario("run", title, title, "", args.seed, args.bug, args.profile, args.nodes)
+        html = build_html([record(scenario, args.duration)])
+        what = title
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8")
+    print(f"wrote {out} ({what}, {len(html) // 1024} KB)")
+    if args.open:
+        webbrowser.open(out.resolve().as_uri())
+    return 0
+
+
 def cmd_bugs(_args: argparse.Namespace) -> int:
     print("\n".join(BUG_NAMES))
     return 0
@@ -323,6 +346,16 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--clients", type=int, default=3)
     verify.add_argument("--seed", type=int)
     verify.set_defaults(func=cmd_verify)
+
+    viz = sub.add_parser("viz", help="build the interactive web visualiser (one HTML file)")
+    viz.add_argument("--out", required=True, help="output .html path")
+    viz.add_argument("--seed", type=int, help="record this seed; omit for the demo scenarios")
+    viz.add_argument("--nodes", type=int, default=3)
+    viz.add_argument("--bug", choices=BUG_NAMES)
+    viz.add_argument("--profile", choices=PROFILES, default="default")
+    viz.add_argument("--duration", type=int, help="milliseconds of load and faults")
+    viz.add_argument("--open", action="store_true", help="open the page in a browser")
+    viz.set_defaults(func=cmd_viz)
 
     bugs = sub.add_parser("bugs", help="list injectable bugs")
     bugs.set_defaults(func=cmd_bugs)

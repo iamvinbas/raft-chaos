@@ -28,17 +28,52 @@ the exact same failure, every time.
 - **Also works for real:** the same node runs over TCP. In Docker, with `kill -9`, `tc netem` and
   an `iptables` partition applied during the run, the history of 3167 operations was still
   linearizable. The run also exposed a weakness (no PreVote) that the README documents.
+- **See it happen:** an interactive visualiser replays any run, message by message, and stops on
+  the event that breaks an invariant.
 - **SRE view:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
 - Standard library only at runtime, strict `mypy`, CI on Python 3.10 and 3.12.
 
 <div align="center">
 
-<img src="docs/timeline-chaos.svg" alt="Timeline of a correct Raft cluster under partitions and crashes" width="100%">
+<img src="docs/img/visualiser.png" alt="The raft-chaos visualiser: three Raft servers, one partitioned away and stuck as a candidate while the other two elect a leader" width="100%">
 
-<sub>A correct 3-node cluster under chaos: leaders come and go, the network partitions, nodes crash,
-and clients keep succeeding whenever a majority can talk. Generated with `raftchaos timeline`.</sub>
+<sub>The visualiser replaying a correct cluster under chaos. Node 0 is partitioned away and keeps
+starting elections (term 9) while nodes 1 and 2 elect a leader and keep committing.</sub>
 
 </div>
+
+## Watch it fail
+
+`raftchaos viz` turns any run into an interactive page: one HTML file, no server, no build step.
+
+```bash
+raftchaos viz --out viz.html --open                              # the five demo scenes
+raftchaos viz --seed 4 --bug forget_vote_on_restart --profile adversarial --out run.html --open
+```
+
+What you see:
+
+- **Servers** with their role, term, commit index, vote and the tail of their log. Each square is
+  a log entry coloured by its term, so diverging logs are visible at a glance.
+- **Messages in flight**: vote requests, log entries, heartbeats and client requests, each with
+  its own colour. A lost message stops half way and bursts red.
+- **Faults**: partitioned links turn into red dashed lines with a cut mark, crashed servers go
+  dark, lossy links flicker amber.
+- **A timeline** of every server's role, the faults and client successes. Click or drag to jump.
+- **The moment it breaks**: playback stops on the violating event and explains the invariant,
+  the planted bug and the command that reproduces it.
+
+<div align="center">
+
+<img src="docs/img/visualiser-violation.png" alt="The visualiser stopped on an Election Safety violation: nodes 0 and 2 both lead term 11" width="100%">
+
+<sub>Planted bug <code>double_vote</code>: nodes 0 and 2 both become leader of term 11.</sub>
+
+</div>
+
+Links carry the scene and the moment, for example `viz.html#double-vote@7200`, so a failure can
+be shared exactly. The demo page is committed as [docs/viz/index.html](docs/viz/index.html), and a
+test fails if it drifts from what the code produces.
 
 ## Why this exists
 
@@ -70,6 +105,7 @@ raftchaos slo --seed 7                    # SLO and error-budget report
 raftchaos anomalies --seed 7              # anomalous windows, attributed to faults
 raftchaos metrics --seed 7                # Prometheus text format
 raftchaos timeline --seed 7 --out run.svg # draw the run
+raftchaos viz --out viz.html --open       # interactive visualiser
 raftchaos bugs                            # list injectable bugs
 ```
 
@@ -336,13 +372,16 @@ raft-chaos/
 │   ├── slo.py             # SLOs and error-budget accounting
 │   ├── anomaly.py         # robust z-score detector, fault attribution
 │   ├── timeline_svg.py    # SVG timeline of roles, faults and client successes
+│   ├── recorder.py        # opt-in recording of a run for replay
+│   ├── viz/               # the web visualiser: template + builder
 │   ├── runtime/           # the same node over real TCP: server, client, storage, verify
-│   └── cli.py             # run, hunt, metrics, slo, anomalies, timeline, node, kv, verify
+│   └── cli.py             # run, hunt, viz, metrics, slo, anomalies, timeline, node, kv, verify
 ├── tests/                 # simulation, linearizability and observability tests
 ├── docs/design.md         # invariants and design decisions
 ├── docs/observability.md  # metrics, SLOs, anomaly detection, timelines
 ├── docs/real-cluster.md   # running and breaking a real cluster
-├── docs/*.svg             # timelines used in this README
+├── docs/viz/index.html    # the visualiser with the demo scenes
+├── docs/img/, docs/*.svg  # images used in this README
 ├── Dockerfile, docker-compose.yml, docker/
 ├── scripts/chaos-demo.sh  # kill, tc netem and iptables against the compose cluster
 └── .github/workflows/ci.yml
@@ -377,12 +416,13 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 - Single-key operations only; the linearizability checker is exponential in the worst case.
 
 **Done since the first release:** Prometheus metrics, SLO report, anomaly detection, SVG
-timelines, a real TCP runtime with durable storage, and a linearizability check of a live cluster.
+timelines, a real TCP runtime with durable storage, a linearizability check of a live cluster,
+and an interactive visualiser.
 
 **Planned**
 
 - [ ] PreVote, proven with the simulator (an isolated node must not disturb the leader)
-- [ ] Interactive web visualiser (static SVG timelines exist)
+- [ ] Live mode for the visualiser, attached to a real cluster
 - [ ] Snapshots and cluster membership changes
 
 ## References

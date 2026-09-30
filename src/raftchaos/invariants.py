@@ -26,6 +26,18 @@ class Violation:
         return f"[{self.time}ms] {self.kind}: {self.message}"
 
 
+def describe_entry(entry: LogEntry) -> str:
+    """A short, readable form of a log entry, such as `put x=45 (term 18)`."""
+    command = entry.command
+    if command[0] == "put":
+        what = f"put {command[1]}={command[2]}"
+    elif command[0] == "get":
+        what = f"get {command[1]}"
+    else:
+        what = str(command[0])
+    return f"{what} (term {entry.term})"
+
+
 class InvariantViolation(Exception):
     def __init__(self, violation: Violation) -> None:
         super().__init__(str(violation))
@@ -50,8 +62,8 @@ class InvariantChecker:
             self._fail(
                 sim,
                 "state-machine-safety",
-                f"node {node_id} applied {entry} at index {index}, "
-                f"but {known[0]} was already applied there",
+                f"node {node_id} applied {describe_entry(entry)} at index {index}, "
+                f"but {describe_entry(known[0])} was already applied there",
             )
 
     def check(self, sim: Simulator) -> None:
@@ -82,7 +94,7 @@ class InvariantChecker:
                     sim,
                     "leader-completeness",
                     f"leader {leader.id} of term {leader.current_term} is missing "
-                    f"committed entry {entry} at index {index}",
+                    f"committed entry {describe_entry(entry)} at index {index}",
                 )
 
     def _check_log_matching(self, sim: Simulator, a: RaftNode, b: RaftNode) -> None:

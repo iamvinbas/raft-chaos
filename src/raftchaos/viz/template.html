@@ -1,0 +1,897 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>raft-chaos visualiser</title>
+<meta name="description" content="Watch a Raft cluster fail: deterministic replays of partitions, crashes and planted protocol bugs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root {
+  --bg: #0b0f14; --panel: #11161d; --panel2: #161d26; --border: #243041; --border2: #2f3d52;
+  --text: #e6edf3; --muted: #8b98a9; --dim: #5c6878;
+  --leader: #3fb950; --follower: #3b4658; --candidate: #e3a33a; --down: #7a2530;
+  --vote: #f0b54a; --append: #3fb950; --client: #58a6ff; --bad: #f85149; --accent: #7c9cff;
+  --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body > * { flex-shrink: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); display: flex; flex-direction: column; min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button, select { font: inherit; color: inherit; }
+
+header { display: flex; align-items: center; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel); flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+.brand h1 span { color: var(--muted); font-weight: 500; }
+.brand small { color: var(--muted); }
+.controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.btn { background: var(--panel2); border: 1px solid var(--border2); border-radius: 8px; padding: 6px 10px; cursor: pointer; line-height: 1.1; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b0f14; font-weight: 600; min-width: 84px; }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.seg { display: inline-flex; border: 1px solid var(--border2); border-radius: 8px; overflow: hidden; }
+.seg button { background: var(--panel2); border: 0; padding: 6px 9px; cursor: pointer; border-right: 1px solid var(--border2); }
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #0b0f14; font-weight: 600; }
+.clock { font-family: var(--mono); font-size: 13px; color: var(--muted); min-width: 118px; text-align: right; }
+
+.scenarios { display: flex; gap: 8px; padding: 12px 16px 0; overflow-x: auto; }
+.chip { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+.chip:hover { border-color: var(--border2); }
+.chip[aria-selected="true"] { border-color: var(--accent); background: #18203a; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.about { padding: 8px 16px 0; color: var(--muted); max-width: 1100px; }
+.about b { color: var(--text); font-weight: 600; }
+
+main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; padding: 12px 16px; align-items: stretch; }
+.stage-wrap { min-width: 0; position: relative; background: radial-gradient(ellipse at 50% 40%, #121a26 0%, var(--panel) 70%); border: 1px solid var(--border); border-radius: 14px; height: clamp(460px, 64vh, 720px); overflow: hidden; }
+#stage { position: absolute; inset: 0; width: 100%; height: 100%; }
+aside { min-width: 0; display: flex; flex-direction: column; gap: 12px; height: clamp(460px, 64vh, 720px); min-height: 0; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+.panel h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.now { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; }
+.now dt { color: var(--muted); }
+.now dd { margin: 0; font-family: var(--mono); font-size: 12.5px; }
+.events { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#log { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; min-height: 0; font-size: 12.5px; }
+#log li { display: grid; grid-template-columns: 58px 10px 1fr; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 6px; cursor: pointer; color: var(--dim); }
+#log li:hover { background: var(--panel2); }
+#log li.past { color: var(--text); }
+#log li.current { background: #18203a; }
+#log li.minor.past { color: var(--muted); }
+#log li .t { font-family: var(--mono); font-size: 11.5px; color: var(--dim); text-align: right; }
+#log li .d { width: 8px; height: 8px; border-radius: 50%; align-self: center; }
+#log li.violation { color: var(--bad); font-weight: 600; }
+.legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; font-size: 12px; color: var(--muted); }
+.legend span { display: flex; align-items: center; gap: 7px; }
+.sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; flex: 0 0 auto; }
+.swd { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+
+.track-wrap { padding: 0 16px 8px; }
+.track-box { position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; height: 150px; cursor: pointer; touch-action: none; }
+#track { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hint { color: var(--dim); font-size: 12px; padding: 6px 2px 0; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border2); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); }
+footer { padding: 4px 16px 14px; color: var(--dim); font-size: 12px; }
+
+.modal { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(6, 9, 13, 0.55); backdrop-filter: blur(2px); padding: 16px; }
+.modal.hidden { display: none; }
+.modal .card { max-width: 520px; width: 100%; background: var(--panel); border: 1px solid var(--bad); border-radius: 14px; padding: 18px 20px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+.modal.ok .card { border-color: var(--leader); }
+.modal .tag { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--bad); font-weight: 700; }
+.modal.ok .tag { color: var(--leader); }
+.modal h2 { margin: 4px 0 8px; font-size: 21px; letter-spacing: -0.01em; }
+.modal p { margin: 0 0 10px; color: var(--muted); }
+.modal .msg { font-family: var(--mono); font-size: 13px; color: var(--text); background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
+.modal .bug { border-left: 3px solid var(--vote); padding-left: 10px; color: var(--text); }
+.repro { display: flex; gap: 8px; align-items: center; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 6px 6px 10px; margin: 6px 0 14px; }
+.repro code { font-family: var(--mono); font-size: 12px; flex: 1; overflow-x: auto; white-space: nowrap; }
+.modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+@media (max-width: 960px) {
+  main { grid-template-columns: minmax(0, 1fr); }
+  header .brand small { display: none; }
+  .stage-wrap { height: 62vh; min-height: 420px; }
+  aside { height: auto; }
+  #log { max-height: 320px; }
+  .clock { min-width: 0; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>raft-chaos <span>visualiser</span></h1>
+    <small>deterministic replays of a Raft cluster under faults · <a id="repo" href="https://github.com/iamvinbas/raft-chaos">source</a></small>
+  </div>
+  <div class="controls" role="toolbar" aria-label="Playback">
+    <button class="btn primary" id="play" title="Play or pause (space)">Play</button>
+    <button class="btn" id="restart" title="Restart (R)">Restart</button>
+    <button class="btn" id="prev" title="Previous event (←)">◀ Event</button>
+    <button class="btn" id="next" title="Next event (→)">Event ▶</button>
+    <div class="seg" id="speeds" role="group" aria-label="Speed"></div>
+    <button class="btn" id="hb" aria-pressed="true" title="Show heartbeats and acks (H)">Heartbeats</button>
+    <button class="btn" id="cl" aria-pressed="true" title="Show client traffic (C)">Clients</button>
+    <button class="btn" id="share" title="Copy a link to this exact moment">Link</button>
+    <span class="clock" id="clock">0.000 s</span>
+  </div>
+</header>
+
+<nav class="scenarios" id="scenarios" role="tablist" aria-label="Scenarios"></nav>
+<p class="about" id="about"></p>
+
+<main>
+  <div class="stage-wrap" id="stage-wrap">
+    <canvas id="stage" role="img" aria-label="Animated view of the Raft cluster"></canvas>
+    <div class="modal hidden" id="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+      <div class="card">
+        <div class="tag" id="m-tag"></div>
+        <h2 id="m-title"></h2>
+        <p class="msg" id="m-msg"></p>
+        <p id="m-explain"></p>
+        <p class="bug" id="m-bug"></p>
+        <div class="repro"><code id="m-cmd"></code><button class="btn" id="m-copy">Copy</button></div>
+        <div class="actions">
+          <button class="btn" id="m-replay">Replay</button>
+          <button class="btn primary" id="m-close">Keep exploring</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <aside>
+    <section class="panel">
+      <h3>Right now</h3>
+      <dl class="now">
+        <dt>Leader</dt><dd id="n-leader">-</dd>
+        <dt>Network</dt><dd id="n-net">-</dd>
+        <dt>Clients</dt><dd id="n-ops">-</dd>
+        <dt>Phase</dt><dd id="n-phase">-</dd>
+      </dl>
+    </section>
+    <section class="panel events">
+      <h3>Events</h3>
+      <ol id="log"></ol>
+    </section>
+    <section class="panel">
+      <h3>Legend</h3>
+      <div class="legend">
+        <span><i class="sw" style="background:var(--leader)"></i>leader</span>
+        <span><i class="sw" style="background:var(--follower)"></i>follower</span>
+        <span><i class="sw" style="background:var(--candidate)"></i>candidate</span>
+        <span><i class="sw" style="background:var(--down)"></i>crashed</span>
+        <span><i class="swd" style="background:var(--vote)"></i>vote request / reply</span>
+        <span><i class="swd" style="background:var(--append)"></i>log entries</span>
+        <span><i class="swd" style="background:#56657a"></i>heartbeat / ack</span>
+        <span><i class="swd" style="background:var(--client)"></i>client request</span>
+        <span><i class="swd" style="background:var(--bad)"></i>message lost</span>
+        <span><i class="sw" style="background:repeating-linear-gradient(90deg,var(--bad) 0 4px,transparent 4px 7px)"></i>partitioned link</span>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<div class="track-wrap">
+  <div class="track-box" id="track-box" aria-label="Timeline: click or drag to seek">
+    <canvas id="track"></canvas>
+  </div>
+  <div class="hint">
+    <span>Click or drag the timeline to jump anywhere. Each small square in a server is one log entry, coloured by its term; filled means committed.</span>
+    <span><kbd>space</kbd> play · <kbd>←</kbd><kbd>→</kbd> events · <kbd>R</kbd> restart · <kbd>H</kbd> heartbeats</span>
+  </div>
+</div>
+<footer id="footer"></footer>
+
+<script id="data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("data").textContent);
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const C = {
+  bg: css("--bg"), panel: css("--panel"), panel2: css("--panel2"), border: css("--border"), border2: css("--border2"),
+  text: css("--text"), muted: css("--muted"), dim: css("--dim"),
+  leader: css("--leader"), follower: css("--follower"), candidate: css("--candidate"), down: css("--down"),
+  vote: css("--vote"), append: css("--append"), client: css("--client"), bad: css("--bad"), accent: css("--accent"),
+  heart: "#56657a", mono: css("--mono"), sans: css("--sans"),
+};
+const ROLE_COLOR = { leader: C.leader, follower: C.follower, candidate: C.candidate, down: C.down };
+const INVARIANTS = {
+  "election-safety": ["Election Safety", "Raft allows at most one leader per term. Two leaders in the same term can each accept writes, and the cluster's copies of the data start to diverge."],
+  "leader-completeness": ["Leader Completeness", "A newly elected leader must already hold every committed entry. This leader is missing one, so data the clients were told is safe can be lost."],
+  "state-machine-safety": ["State Machine Safety", "Every server must apply the same command at the same log position. Two servers applied different commands at the same position, so their data now differs."],
+  "log-matching": ["Log Matching", "If two logs contain an entry with the same index and term, all earlier entries must match too. Here they do not."],
+  "liveness": ["Liveness", "Once the network healed and every server was back, the cluster had to elect a leader and bring every server up to date. It did not."],
+  "linearizability": ["Linearizability", "The clients saw results that no single order of operations can explain, for example a read that returned a value it could not have seen."],
+};
+const BUGS = {
+  double_vote: "A server grants its vote even if it already voted for someone else in this term.",
+  stale_log_vote: "A server votes for a candidate whose log is behind its own.",
+  commit_without_majority: "The leader commits an entry with one replica fewer than a majority.",
+  commit_old_term: "The leader commits an entry from an earlier term by counting replicas, the trap in Figure 8 of the Raft paper.",
+  no_truncate_on_conflict: "A follower keeps conflicting log entries instead of deleting them.",
+  forget_vote_on_restart: "A server does not save its vote to disk, so after a crash it can vote again in the same term.",
+};
+const FATE = { DELIVERED: 0, LOST: 1, CUT: 2, CUT_IN_FLIGHT: 3, DOWN: 4 };
+
+// ---- state ------------------------------------------------------------------------------
+let P = null;          // prepared scenario
+let t = 0;             // virtual time, ms
+let playing = false;
+let speed = 0.25;      // virtual ms per real ms
+let showHeartbeats = true, showClients = true;
+let modalShownFor = null;
+let lastFrame = performance.now();
+let layout = null;
+
+// ---- data preparation -------------------------------------------------------------------
+function bisect(arr, time, key) {  // index of the last element with key <= time, or -1
+  let lo = 0, hi = arr.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (key(arr[mid]) <= time) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+function countUpTo(sorted, time) { return bisect(sorted, time, (x) => x) + 1; }
+
+function prepare(sc) {
+  const states = sc.states.map((rows) => {
+    const out = rows.map((r) => r[1] === "down"
+      ? { t: r[0], role: "down", term: 0, commit: 0, last: 0, voted: null, tail: [] }
+      : { t: r[0], role: r[1], term: r[2], commit: r[3], last: r[4], voted: r[5], tail: r[6] });
+    for (let i = 0; i < out.length; i++) {
+      const prev = out[i - 1];
+      out[i].since = prev && prev.role === out[i].role && prev.term === out[i].term ? prev.since : out[i].t;
+    }
+    return out;
+  });
+  const network = sc.network.map((r) => ({ t: r[0], groups: r[1], drop: r[2] }));
+  let maxWindow = 0;
+  for (const m of sc.messages) maxWindow = Math.max(maxWindow, m[5] - m[0]);
+
+  const okTimes = sc.ops.filter((o) => o[8] === "ok").map((o) => o[7]).sort((a, b) => a - b);
+  const timeoutTimes = sc.ops.filter((o) => o[8] === "info").map((o) => o[6] + sc.client_timeout).sort((a, b) => a - b);
+  const rejectTimes = sc.messages.filter((m) => m[3] === "RES" && m[4] === 0 && m[6] === 0).map((m) => m[5]).sort((a, b) => a - b);
+
+  const events = [];
+  let partitioned = false, lossy = false;
+  for (const [time, kind, node, detail] of sc.faults) {
+    let text = detail, color = C.bad, minor = false;
+    if (kind === "partition" || kind === "isolate") partitioned = true;
+    if (kind === "heal" && !detail.startsWith("quiesce")) {
+      if (!partitioned && !lossy) continue;  // the nemesis healed a network that was fine
+      partitioned = lossy = false;
+    }
+    if (kind === "flaky") {
+      const high = parseFloat(detail.split(" ").pop()) >= 0.1;
+      if (!high && !lossy) continue;
+      lossy = high;
+    }
+    if (kind === "partition") text = "network partition: " + detail.replace("partition ", "").replaceAll("[", "{").replaceAll("]", "}");
+    else if (kind === "isolate") text = `leader ${node} cut off from the others`;
+    else if (kind === "heal") { text = detail.startsWith("quiesce") ? "faults stop: network healed, every server up" : "network healed"; color = C.leader; }
+    else if (kind === "restart") { text = `node ${node} restarts from disk`; color = C.muted; }
+    else if (kind === "flaky") {
+      const pct = Math.round(parseFloat(detail.split(" ").pop()) * 100);
+      text = pct >= 10 ? `network drops ${pct}% of messages` : "packet loss back to normal"; color = pct >= 10 ? C.candidate : C.muted;
+    } else if (kind === "crash") text = `node ${node} crashes`;
+    else if (kind === "torn") text = `leader ${node} crashes mid-broadcast`;
+    else if (kind === "vote-crash") text = detail.replace("crashes right after voting for", "crashes right after voting for node");
+    events.push({ t: time, text, color, minor });
+  }
+  states.forEach((rows, i) => rows.forEach((r, k) => {
+    if (r.t !== r.since) return;
+    if (r.role === "leader") events.push({ t: r.t, text: `node ${i} becomes leader of term ${r.term}`, color: C.leader });
+    else if (r.role === "candidate") events.push({ t: r.t, text: `node ${i} starts an election (term ${r.term})`, color: C.candidate, minor: true });
+  }));
+  if (sc.violation) events.push({ t: sc.violation.time, text: `${(INVARIANTS[sc.violation.kind] || [sc.violation.kind])[0]} violated`, color: C.bad, violation: true });
+  events.sort((a, b) => a.t - b.t || (a.violation ? 1 : 0) - (b.violation ? 1 : 0));
+
+  const involved = new Set();
+  if (sc.violation) {
+    const re = /(?:nodes?|leader)\s+((?:\d+)(?:(?:,\s*|\s+and\s+)\d+)*)/g;
+    let m;
+    while ((m = re.exec(sc.violation.message))) m[1].split(/,\s*|\s+and\s+/).forEach((x) => involved.add(+x));
+    const list = sc.violation.message.match(/\[([\d,\s]+)\]/);
+    if (list) list[1].split(",").forEach((x) => involved.add(+x));
+  }
+  return { sc, n: sc.nodes, end: Math.max(sc.end, 1), states, network, maxWindow, okTimes, timeoutTimes, rejectTimes, events, involved };
+}
+
+function stateAt(i, time) {
+  const rows = P.states[i];
+  const k = bisect(rows, time, (r) => r.t);
+  return rows[Math.max(0, k)];
+}
+function netAt(time) {
+  const k = bisect(P.network, time, (r) => r.t);
+  return k < 0 ? { groups: null, drop: 0 } : P.network[k];
+}
+
+// ---- stage layout -----------------------------------------------------------------------
+const stage = document.getElementById("stage"), sctx = stage.getContext("2d");
+const track = document.getElementById("track"), tctx = track.getContext("2d");
+let trackBitmap = null;
+
+function sizeCanvas(canvas, ctx) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.round(rect.width * dpr);
+  canvas.height = Math.round(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w: rect.width, h: rect.height };
+}
+
+function computeLayout() {
+  const { w, h } = sizeCanvas(stage, sctx);
+  const k = Math.max(0.72, Math.min(1.2, Math.min(w, h) / 560));
+  const cw = 176 * k, ch = 118 * k;
+  const clientCol = w > 620 ? 64 : 0;
+  const cx = (w + clientCol) / 2, cy = clientCol ? h / 2 + 18 : h / 2 + 4;
+  const n = P.n;
+  const rx = Math.max(cw * 0.9, Math.min((w - clientCol) / 2 - cw / 2 - 18, 300 * k));
+  const ry = Math.max(ch * 0.9, Math.min(h / 2 - ch / 2 - (clientCol ? 30 : 46), 220 * k));
+  const nodes = [];
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n;
+    nodes.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
+  }
+  const clients = [];
+  const nc = P.sc.clients;
+  for (let i = 0; i < nc; i++) {
+    const y = clientCol ? cy + (i - (nc - 1) / 2) * 46 : h - 22;
+    const x = clientCol ? 46 : w / 2 + (i - (nc - 1) / 2) * 72;
+    clients.push({ x, y });
+  }
+  layout = { w, h, k, cw, ch, nodes, clients, cx, cy };
+}
+
+function anchor(addr) {
+  if (typeof addr === "string") {
+    const c = layout.clients[+addr.slice(1)];
+    return { x: c.x, y: c.y, hw: 30, hh: 11 };
+  }
+  const p = layout.nodes[addr];
+  return { x: p.x, y: p.y, hw: layout.cw / 2 + 4, hh: layout.ch / 2 + 4 };
+}
+function edge(from, to) {  // point where the segment from->to leaves from's box
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const s = Math.min(from.hw / Math.max(Math.abs(dx), 1e-6), from.hh / Math.max(Math.abs(dy), 1e-6));
+  return { x: from.x + dx * Math.min(s, 0.45), y: from.y + dy * Math.min(s, 0.45) };
+}
+
+// ---- drawing: stage ---------------------------------------------------------------------
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function termColor(term, alpha = 1) {
+  const hue = (term * 57 + 200) % 360;
+  return `hsla(${hue}, 62%, 58%, ${alpha})`;
+}
+function font(size, weight = 500, mono = false) { return `${weight} ${size}px ${mono ? C.mono : C.sans}`; }
+
+function drawLinks(net) {
+  const ctx = sctx, { nodes } = layout;
+  for (let a = 0; a < P.n; a++) for (let b = a + 1; b < P.n; b++) {
+    const A = nodes[a], B = nodes[b];
+    const cut = net.groups && net.groups[a] !== net.groups[b];
+    ctx.save();
+    ctx.lineWidth = cut ? 2 : 1.5;
+    if (cut) { ctx.strokeStyle = C.bad; ctx.setLineDash([7, 6]); ctx.globalAlpha = 0.85; }
+    else if (net.drop >= 0.1) { ctx.strokeStyle = C.candidate; ctx.setLineDash([2, 5]); ctx.globalAlpha = 0.7; }
+    else { ctx.strokeStyle = C.border2; ctx.globalAlpha = 0.9; }
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+    if (cut) {
+      const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.fillStyle = C.panel; ctx.beginPath(); ctx.arc(mx, my, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = C.bad; ctx.lineWidth = 2; ctx.beginPath();
+      ctx.moveTo(mx - 5, my - 5); ctx.lineTo(mx + 5, my + 5); ctx.moveTo(mx + 5, my - 5); ctx.lineTo(mx - 5, my + 5); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function msgStyle(m) {
+  switch (m[3]) {
+    case "RV": return { c: C.vote, r: 4.6, label: "vote for me?" };
+    case "RVR": return m[4] ? { c: C.vote, r: 3.6, label: "yes" } : { c: C.muted, r: 3.2, label: "no" };
+    case "AE": return m[4] > 0 ? { c: C.append, r: 4.6, label: m[4] > 1 ? `+${m[4]} entries` : "+1 entry" } : { c: C.heart, r: 2.5, hb: true };
+    case "AER": return m[4] ? { c: C.heart, r: 2.5, hb: true } : { c: C.bad, r: 3.2, label: "mismatch" };
+    case "REQ": return { c: C.client, r: 4.2, label: m[4], client: true };
+    case "RES": return m[4] ? { c: C.client, r: 3.2, label: "ok", client: true } : { c: C.muted, r: 3.2, label: "not leader", client: true };
+    default: return { c: C.muted, r: 3 };
+  }
+}
+
+function drawMessages() {
+  const ctx = sctx;
+  const minVis = Math.max(260 * speed, 1);
+  const windowMs = Math.max(P.maxWindow, minVis) * 1.35;
+  const msgs = P.sc.messages;
+  let i = Math.max(0, bisect(msgs, t - windowMs, (m) => m[0]));
+  const showLabels = speed <= 0.5;
+  const placed = [];  // label positions already used this frame
+  const free = (x, y) => placed.every((p) => Math.abs(p.x - x) > 70 || Math.abs(p.y - y) > 14);
+  for (; i < msgs.length && msgs[i][0] <= t; i++) {
+    const m = msgs[i];
+    const st = msgStyle(m);
+    if (st.hb && !showHeartbeats) continue;
+    if (st.client && !showClients) continue;
+    const dur = Math.max(m[5] - m[0], minVis);
+    const p = (t - m[0]) / dur;
+    if (p < 0 || p > 1.35) continue;
+    const fate = m[6];
+    const stop = fate === FATE.LOST ? 0.5 : fate === FATE.CUT ? 0.28 : fate === FATE.CUT_IN_FLIGHT ? 0.72 : 1;
+    if (fate === FATE.DELIVERED && p > 1) continue;
+    const A = anchor(m[1]), B = anchor(m[2]);
+    const s = edge(A, B), e = edge(B, A);
+    // offset the two directions of a link so requests and replies do not overlap
+    const dx = e.x - s.x, dy = e.y - s.y, len = Math.hypot(dx, dy) || 1;
+    const side = (typeof m[1] === "number" && typeof m[2] === "number") ? (m[1] < m[2] ? 1 : -1) : 0;
+    const ox = (-dy / len) * 5 * side, oy = (dx / len) * 5 * side;
+    const q = Math.min(p, stop);
+    const x = s.x + dx * q + ox, y = s.y + dy * q + oy;
+    if (p <= stop) {
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.strokeStyle = st.c; ctx.lineWidth = st.r * 0.9; ctx.lineCap = "round";
+      const tq = Math.max(0, q - 0.12);
+      ctx.beginPath(); ctx.moveTo(s.x + dx * tq + ox, s.y + dy * tq + oy); ctx.lineTo(x, y); ctx.stroke();
+      ctx.globalAlpha = 1; ctx.fillStyle = st.c;
+      ctx.beginPath(); ctx.arc(x, y, st.r, 0, Math.PI * 2); ctx.fill();
+      if (showLabels && st.label && !st.hb && q > 0.08 && q < 0.92 && free(x, y)) {
+        placed.push({ x, y });
+        ctx.font = font(10.5, 500, true); ctx.fillStyle = st.c; ctx.globalAlpha = 0.9;
+        ctx.fillText(st.label, x + 7, y - 6);
+      }
+      ctx.restore();
+    } else if (fate !== FATE.DELIVERED) {
+      const fade = 1 - Math.min(1, (p - stop) / 0.45);
+      if (fade <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = fade;
+      if (fate === FATE.DOWN) {
+        ctx.fillStyle = C.muted; ctx.beginPath(); ctx.arc(x, y, st.r, 0, Math.PI * 2); ctx.fill();
+      } else {
+        const r = 4 + (1 - fade) * 7;
+        ctx.strokeStyle = C.bad; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x - r, y - r); ctx.lineTo(x + r, y + r); ctx.moveTo(x + r, y - r); ctx.lineTo(x - r, y + r); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+}
+
+function drawNode(i, now) {
+  const ctx = sctx, { k, cw, ch } = layout, pos = layout.nodes[i];
+  const st = stateAt(i, t);
+  const x = pos.x - cw / 2, y = pos.y - ch / 2;
+  const role = st.role, color = ROLE_COLOR[role];
+  const age = t - st.since, flashWindow = 700 * speed;
+  const broken = P.sc.violation && t >= P.sc.violation.time && (P.involved.size === 0 || P.involved.has(i));
+
+  ctx.save();
+  // pulses when a node becomes leader or crashes
+  if ((role === "leader" || role === "down") && age < flashWindow) {
+    const f = age / flashWindow;
+    ctx.strokeStyle = role === "leader" ? C.leader : C.bad; ctx.globalAlpha = 1 - f; ctx.lineWidth = 3;
+    roundRect(ctx, x - 14 * f, y - 14 * f, cw + 28 * f, ch + 28 * f, 14 + 8 * f); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (role === "leader") { ctx.shadowColor = C.leader; ctx.shadowBlur = 22; }
+  if (broken) { ctx.shadowColor = C.bad; ctx.shadowBlur = 18 + 10 * Math.sin(now / 160); }
+  ctx.fillStyle = role === "down" ? "#1a1216" : C.panel2;
+  roundRect(ctx, x, y, cw, ch, 12 * k); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.lineWidth = role === "leader" || broken ? 2.5 : 1.5;
+  ctx.strokeStyle = broken ? C.bad : role === "follower" ? C.border2 : color;
+  if (role === "candidate") ctx.globalAlpha = 0.65 + 0.35 * Math.sin(now / 140);
+  if (role === "down") ctx.setLineDash([6, 5]);
+  roundRect(ctx, x, y, cw, ch, 12 * k); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+  const pad = 12 * k;
+  // header: name + role badge
+  ctx.font = font(12 * k, 700, true); ctx.fillStyle = C.muted; ctx.textBaseline = "middle";
+  ctx.fillText(`NODE ${i}`, x + pad, y + pad + 5 * k);
+  const label = role === "down" ? "CRASHED" : role.toUpperCase();
+  ctx.font = font(10 * k, 700);
+  const bw = ctx.measureText(label).width + 12 * k;
+  ctx.fillStyle = role === "follower" ? C.border2 : color;
+  roundRect(ctx, x + cw - pad - bw, y + pad - 3 * k, bw, 17 * k, 8 * k); ctx.fill();
+  ctx.fillStyle = role === "follower" ? C.text : role === "down" ? "#ffd9dc" : "#0b0f14";
+  ctx.fillText(label, x + cw - pad - bw + 6 * k, y + pad + 5.5 * k);
+  if (role === "leader") {  // crown
+    const cx0 = x + cw / 2, cy0 = y - 3 * k;
+    ctx.fillStyle = C.leader; ctx.beginPath();
+    ctx.moveTo(cx0 - 11 * k, cy0); ctx.lineTo(cx0 - 11 * k, cy0 - 9 * k); ctx.lineTo(cx0 - 5 * k, cy0 - 4 * k);
+    ctx.lineTo(cx0, cy0 - 12 * k); ctx.lineTo(cx0 + 5 * k, cy0 - 4 * k); ctx.lineTo(cx0 + 11 * k, cy0 - 9 * k);
+    ctx.lineTo(cx0 + 11 * k, cy0); ctx.closePath(); ctx.fill();
+  }
+
+  if (role === "down") {
+    ctx.font = font(12.5 * k, 500); ctx.fillStyle = "#c98b92";
+    ctx.fillText("process killed", x + pad, y + ch / 2 + 2 * k);
+    ctx.font = font(11 * k, 400); ctx.fillStyle = C.dim;
+    ctx.fillText("term, vote and log are on disk", x + pad, y + ch / 2 + 20 * k);
+    ctx.restore();
+    return;
+  }
+  // term, commit, vote
+  ctx.font = font(20 * k, 700); ctx.fillStyle = C.text;
+  ctx.fillText(`term ${st.term}`, x + pad, y + 42 * k);
+  ctx.font = font(11 * k, 500, true); ctx.fillStyle = C.muted;
+  ctx.fillText(`commit ${st.commit} / log ${st.last}`, x + pad, y + 62 * k);
+  if (role !== "leader" && st.voted !== null && st.voted !== undefined) {
+    ctx.fillStyle = C.vote;
+    const who = st.voted === i ? "itself" : `node ${st.voted}`;
+    ctx.fillText(`voted for ${who}`, x + pad, y + 77 * k);
+  }
+  // log tail: one square per entry, coloured by term, filled when committed
+  const n = st.tail.length, box = 9.5 * k, gap = 2.5 * k;
+  const first = st.last - n + 1;
+  const sx = x + pad, sy = y + ch - pad - box;
+  for (let j = 0; j < n; j++) {
+    const idx = first + j, bx = sx + j * (box + gap);
+    const committed = idx <= st.commit;
+    ctx.fillStyle = committed ? termColor(st.tail[j]) : "transparent";
+    ctx.strokeStyle = termColor(st.tail[j]); ctx.lineWidth = 1.4;
+    roundRect(ctx, bx, sy, box, box, 2.5 * k);
+    if (committed) ctx.fill(); ctx.stroke();
+  }
+  if (first > 1 && n) {
+    ctx.font = font(9.5 * k, 500, true); ctx.fillStyle = C.dim;
+    ctx.fillText(`#${first}`, sx + n * (box + gap) + 3 * k, sy + box / 2);
+  }
+  ctx.restore();
+}
+
+function drawClients() {
+  const ctx = sctx;
+  const active = t < P.sc.duration;
+  layout.clients.forEach((c, i) => {
+    ctx.save();
+    ctx.globalAlpha = active ? 1 : 0.4;
+    ctx.fillStyle = C.panel2; ctx.strokeStyle = showClients ? C.client : C.border2; ctx.lineWidth = 1.3;
+    roundRect(ctx, c.x - 30, c.y - 11, 60, 22, 11); ctx.fill(); ctx.stroke();
+    ctx.font = font(11, 600, true); ctx.fillStyle = showClients ? C.client : C.dim; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(`client ${i}`, c.x, c.y + 0.5);
+    ctx.restore();
+  });
+}
+
+function drawBanner(net) {
+  const ctx = sctx;
+  let text = "network healthy", color = C.leader;
+  if (net.groups) {
+    const sides = {};
+    net.groups.forEach((g, i) => (sides[g] = sides[g] || []).push(i));
+    text = "partition  " + Object.values(sides).map((s) => `{${s.join(", ")}}`).join("  |  ");
+    color = C.bad;
+  } else if (net.drop >= 0.1) { text = `lossy network: ${Math.round(net.drop * 100)}% of messages dropped`; color = C.candidate; }
+  if (t >= P.sc.duration) { text = net.groups || net.drop >= 0.1 ? text : "faults stopped: cluster must converge"; }
+  ctx.save();
+  ctx.font = font(12, 600);
+  const w = ctx.measureText(text).width + 30, x = layout.w / 2 - w / 2, y = 14;
+  ctx.fillStyle = C.panel; ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+  roundRect(ctx, x, y, w, 26, 13); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x + 13, y + 13, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = C.text; ctx.textBaseline = "middle"; ctx.fillText(text, x + 22, y + 13.5);
+  ctx.restore();
+}
+
+function drawStage(now) {
+  const ctx = sctx;
+  ctx.clearRect(0, 0, layout.w, layout.h);
+  const net = netAt(t);
+  drawLinks(net);
+  drawClients();
+  drawMessages();
+  for (let i = 0; i < P.n; i++) drawNode(i, now);
+  drawBanner(net);
+}
+
+// ---- drawing: timeline ------------------------------------------------------------------
+const TRACK = { left: 84, right: 14, top: 12 };
+function trackX(time) { return TRACK.left + (layout.tw - TRACK.left - TRACK.right) * time / P.end; }
+function trackTime(x) { return Math.max(0, Math.min(P.end, (x - TRACK.left) / (layout.tw - TRACK.left - TRACK.right) * P.end)); }
+
+function buildTrack() {
+  const { w, h } = sizeCanvas(track, tctx);
+  layout.tw = w; layout.th = h;
+  const off = document.createElement("canvas");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  off.width = Math.round(w * dpr); off.height = Math.round(h * dpr);
+  const ctx = off.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const n = P.n;
+  const laneH = Math.max(9, Math.min(15, (h - 58) / (n + 2)));
+  const gap = 4;
+  const rows = [];
+  let y = TRACK.top;
+  rows.push({ label: "network", y }); y += laneH + gap;
+  for (let i = 0; i < n; i++) { rows.push({ label: `node ${i}`, y, node: i }); y += laneH + gap; }
+  rows.push({ label: "client ok", y }); y += laneH + gap;
+  layout.trackRows = rows; layout.laneH = laneH; layout.trackBottom = y;
+
+  // settle phase shading
+  ctx.fillStyle = "rgba(63,185,80,0.06)";
+  ctx.fillRect(trackX(Math.min(P.sc.duration, P.end)), TRACK.top - 4, trackX(P.end) - trackX(Math.min(P.sc.duration, P.end)), y - TRACK.top);
+  // grid + axis
+  ctx.font = font(10.5, 500, true); ctx.fillStyle = C.dim; ctx.textAlign = "center";
+  for (let s = 0; s <= P.end; s += 1000) {
+    const x = trackX(s);
+    ctx.strokeStyle = C.border; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, TRACK.top - 4); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillText(`${s / 1000}s`, x, y + 12);
+  }
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (const r of rows) { ctx.fillStyle = C.muted; ctx.font = font(11, 500); ctx.fillText(r.label, TRACK.left - 10, r.y + laneH / 2); }
+  // network lane
+  const lane = (row) => { ctx.fillStyle = C.panel2; ctx.fillRect(TRACK.left, row.y, trackX(P.end) - TRACK.left, laneH); };
+  lane(rows[0]);
+  for (let j = 0; j < P.network.length; j++) {
+    const r = P.network[j], end = j + 1 < P.network.length ? P.network[j + 1].t : P.end;
+    if (r.groups) { ctx.fillStyle = C.bad; ctx.fillRect(trackX(r.t), rows[0].y, Math.max(1.5, trackX(end) - trackX(r.t)), laneH); }
+    else if (r.drop >= 0.1) { ctx.fillStyle = C.candidate; ctx.fillRect(trackX(r.t), rows[0].y + laneH * 0.3, Math.max(1.5, trackX(end) - trackX(r.t)), laneH * 0.4); }
+  }
+  // node lanes
+  for (let i = 0; i < n; i++) {
+    const row = rows[1 + i]; lane(row);
+    const st = P.states[i];
+    for (let j = 0; j < st.length; ) {
+      let k = j + 1;
+      while (k < st.length && st[k].role === st[j].role) k++;
+      const end = k < st.length ? st[k].t : P.end;
+      ctx.fillStyle = ROLE_COLOR[st[j].role];
+      ctx.fillRect(Math.floor(trackX(st[j].t)), row.y, Math.max(1, Math.ceil(trackX(end)) - Math.floor(trackX(st[j].t))), laneH);
+      j = k;
+    }
+  }
+  // client successes
+  const crow = rows[rows.length - 1]; lane(crow);
+  ctx.strokeStyle = C.client; ctx.globalAlpha = 0.8; ctx.lineWidth = 1;
+  for (const time of P.okTimes) { const x = trackX(time); ctx.beginPath(); ctx.moveTo(x, crow.y + 2); ctx.lineTo(x, crow.y + laneH - 2); ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  trackBitmap = off;
+}
+
+function drawTrack(hoverX) {
+  const ctx = tctx, { tw, th } = layout;
+  ctx.clearRect(0, 0, tw, th);
+  if (trackBitmap) ctx.drawImage(trackBitmap, 0, 0, tw, th);
+  const bottom = layout.trackBottom;
+  if (P.sc.violation) {
+    const vx = trackX(P.sc.violation.time);
+    ctx.save(); ctx.strokeStyle = C.bad; ctx.lineWidth = 2; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(vx, TRACK.top - 6); ctx.lineTo(vx, bottom); ctx.stroke(); ctx.restore();
+  }
+  // dim the future
+  const px = trackX(t);
+  ctx.fillStyle = "rgba(11,15,20,0.45)";
+  ctx.fillRect(px, TRACK.top - 4, trackX(P.end) - px, bottom - TRACK.top + 4);
+  ctx.strokeStyle = C.text; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px, TRACK.top - 8); ctx.lineTo(px, bottom + 2); ctx.stroke();
+  ctx.fillStyle = C.text; ctx.beginPath(); ctx.moveTo(px - 5, TRACK.top - 10); ctx.lineTo(px + 5, TRACK.top - 10); ctx.lineTo(px, TRACK.top - 4); ctx.fill();
+  if (hoverX !== null && hoverX !== undefined) {
+    const time = trackTime(hoverX);
+    ctx.font = font(11, 600, true); ctx.fillStyle = C.accent; ctx.textAlign = "center";
+    ctx.fillText(`${(time / 1000).toFixed(2)} s`, Math.max(TRACK.left + 20, Math.min(tw - 30, hoverX)), th - 8);
+  }
+}
+
+// ---- side panel + events ----------------------------------------------------------------
+const logEl = document.getElementById("log");
+let currentEvent = -2;
+function buildLog() {
+  logEl.innerHTML = "";
+  P.events.forEach((e, idx) => {
+    const li = document.createElement("li");
+    if (e.minor) li.classList.add("minor");
+    if (e.violation) li.classList.add("violation");
+    li.innerHTML = `<span class="t">${(e.t / 1000).toFixed(3)}s</span><span class="d" style="background:${e.color}"></span><span></span>`;
+    li.lastChild.textContent = e.text;
+    li.addEventListener("click", () => seek(e.t + 0.5));
+    logEl.appendChild(li);
+  });
+  currentEvent = -2;
+}
+function updateLog() {
+  const idx = bisect(P.events, t, (e) => e.t);
+  if (idx === currentEvent) return;
+  const items = logEl.children;
+  for (let j = 0; j < items.length; j++) {
+    items[j].classList.toggle("past", j <= idx);
+    items[j].classList.toggle("current", j === idx);
+  }
+  currentEvent = idx;
+  if (idx >= 0 && !logEl.matches(":hover")) {
+    const item = items[idx], box = logEl;
+    const top = item.offsetTop - box.offsetTop;
+    if (top < box.scrollTop || top > box.scrollTop + box.clientHeight - 30) box.scrollTop = top - box.clientHeight / 2;
+  }
+}
+const $ = (id) => document.getElementById(id);
+let lastPanel = "";
+function updatePanel() {
+  let leader = null;
+  for (let i = 0; i < P.n; i++) { const s = stateAt(i, t); if (s.role === "leader" && (!leader || s.term > leader.term)) leader = { i, term: s.term }; }
+  const net = netAt(t);
+  const netText = net.groups ? "partitioned" : net.drop >= 0.1 ? `${Math.round(net.drop * 100)}% loss` : "healthy";
+  const ok = countUpTo(P.okTimes, t), rej = countUpTo(P.rejectTimes, t), to = countUpTo(P.timeoutTimes, t);
+  const phase = P.sc.violation && t >= P.sc.violation.time ? "invariant broken" : t < P.sc.duration ? "faults + load" : "settle: must converge";
+  const key = [leader && leader.i, leader && leader.term, netText, ok, rej, to, phase].join("|");
+  if (key === lastPanel) return;
+  lastPanel = key;
+  $("n-leader").textContent = leader ? `node ${leader.i} · term ${leader.term}` : "none (election)";
+  $("n-leader").style.color = leader ? C.leader : C.candidate;
+  $("n-net").textContent = netText;
+  $("n-net").style.color = net.groups ? C.bad : net.drop >= 0.1 ? C.candidate : C.text;
+  $("n-ops").textContent = `${ok} ok · ${rej} rejected · ${to} timed out`;
+  $("n-phase").textContent = phase;
+  $("n-phase").style.color = phase === "invariant broken" ? C.bad : C.text;
+}
+
+// ---- modal --------------------------------------------------------------------------------
+const modal = $("modal");
+function showModal() {
+  const sc = P.sc, v = sc.violation;
+  modal.classList.toggle("ok", !v);
+  if (v) {
+    const [name, explain] = INVARIANTS[v.kind] || [v.kind, ""];
+    $("m-tag").textContent = `Invariant broken at ${(v.time / 1000).toFixed(3)} s`;
+    $("m-title").textContent = name;
+    $("m-msg").textContent = v.message;
+    $("m-msg").style.display = "";
+    $("m-explain").textContent = explain;
+  } else {
+    $("m-tag").textContent = "Run complete";
+    $("m-title").textContent = "Every invariant held";
+    $("m-msg").style.display = "none";
+    $("m-explain").textContent = `Checked after every one of the run's events, then the clients' history (${P.okTimes.length} acknowledged operations) was checked for linearizability. Leaders changed ${P.events.filter((e) => e.text.includes("becomes leader")).length} times and no data was lost.`;
+  }
+  const bug = sc.bug ? BUGS[sc.bug] : null;
+  $("m-bug").style.display = bug ? "" : "none";
+  if (bug) $("m-bug").innerHTML = `<b>Planted bug <code>${sc.bug}</code>:</b> `, $("m-bug").append(bug);
+  $("m-cmd").textContent = sc.reproduce;
+  modal.classList.remove("hidden");
+  modalShownFor = sc;
+}
+function hideModal() { modal.classList.add("hidden"); }
+$("m-close").onclick = hideModal;
+$("m-replay").onclick = () => { hideModal(); seek(0); setPlaying(true); };
+$("m-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("m-cmd").textContent); $("m-copy").textContent = "Copied"; }
+  catch { $("m-copy").textContent = "Select it"; }
+  setTimeout(() => ($("m-copy").textContent = "Copy"), 1400);
+};
+
+// ---- controls -----------------------------------------------------------------------------
+function setPlaying(on) {
+  playing = on;
+  $("play").textContent = on ? "Pause" : t >= P.end ? "Replay" : "Play";
+}
+function seek(time) {
+  t = Math.max(0, Math.min(P.end, time));
+  if (P.sc.violation && t < P.sc.violation.time) modalShownFor = null;
+  if (!P.sc.violation && t < P.end) modalShownFor = null;
+  hideModal();
+}
+$("play").onclick = () => { if (t >= P.end) seek(0); hideModal(); setPlaying(!playing); };
+$("restart").onclick = () => { seek(0); setPlaying(true); };
+function jumpEvent(dir) {
+  const idx = bisect(P.events, t - (dir < 0 ? 1 : 0), (e) => e.t);
+  const target = dir > 0 ? P.events[idx + 1] : P.events[Math.max(0, idx - (idx >= 0 && P.events[idx].t >= t - 1 ? 1 : 0))];
+  if (target) { setPlaying(false); seek(target.t + 0.5); }
+}
+$("share").onclick = async () => {
+  const url = location.href.split("#")[0] + "#" + (P.sc.key || "run") + "@" + Math.round(t);
+  history.replaceState(null, "", url);
+  try { await navigator.clipboard.writeText(url); $("share").textContent = "Copied"; }
+  catch { $("share").textContent = "In address bar"; }
+  setTimeout(() => ($("share").textContent = "Link"), 1400);
+};
+$("prev").onclick = () => jumpEvent(-1);
+$("next").onclick = () => jumpEvent(1);
+const SPEEDS = [0.05, 0.1, 0.25, 0.5, 1, 2];
+const speedsEl = $("speeds");
+SPEEDS.forEach((s) => {
+  const b = document.createElement("button");
+  b.textContent = `${s}×`; b.setAttribute("aria-pressed", String(s === speed));
+  b.onclick = () => { speed = s; [...speedsEl.children].forEach((c) => c.setAttribute("aria-pressed", String(c === b))); };
+  speedsEl.appendChild(b);
+});
+function toggle(id, get, set) {
+  const b = $(id);
+  b.onclick = () => { set(!get()); b.setAttribute("aria-pressed", String(get())); };
+}
+toggle("hb", () => showHeartbeats, (v) => (showHeartbeats = v));
+toggle("cl", () => showClients, (v) => (showClients = v));
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest && e.target.closest("button, select, input")) { if (e.key !== " ") return; }
+  if (e.key === " ") { e.preventDefault(); $("play").click(); }
+  else if (e.key === "ArrowRight") jumpEvent(1);
+  else if (e.key === "ArrowLeft") jumpEvent(-1);
+  else if (e.key === "r" || e.key === "R") $("restart").click();
+  else if (e.key === "h" || e.key === "H") $("hb").click();
+  else if (e.key === "c" || e.key === "C") $("cl").click();
+  else if (e.key === "Escape") hideModal();
+});
+
+// timeline seeking
+const trackBox = $("track-box");
+let dragging = false, hoverX = null;
+const posX = (e) => e.clientX - track.getBoundingClientRect().left;
+trackBox.addEventListener("pointerdown", (e) => { dragging = true; trackBox.setPointerCapture(e.pointerId); seek(trackTime(posX(e))); });
+trackBox.addEventListener("pointermove", (e) => { hoverX = posX(e); if (dragging) seek(trackTime(hoverX)); });
+trackBox.addEventListener("pointerup", () => (dragging = false));
+trackBox.addEventListener("pointerleave", () => { hoverX = null; });
+
+// ---- scenarios ----------------------------------------------------------------------------
+const chips = $("scenarios");
+function selectScenario(idx, autoplay, keepHash = false) {
+  const sc = DATA.scenarios[idx];
+  P = prepare(sc);
+  [...chips.children].forEach((c, j) => c.setAttribute("aria-selected", String(j === idx)));
+  $("about").innerHTML = "";
+  const b = document.createElement("b"); b.textContent = sc.title + ". ";
+  $("about").append(b, sc.description || "");
+  $("footer").textContent = `seed ${sc.seed} · ${sc.nodes} nodes · profile ${sc.profile}${sc.bug ? " · bug " + sc.bug : ""} · reproduce: ${sc.reproduce}`;
+  if (sc.key && !keepHash) history.replaceState(null, "", "#" + sc.key);
+  lastPanel = "";
+  modalShownFor = null;
+  computeLayout(); buildTrack(); buildLog();
+  seek(0);
+  setPlaying(Boolean(autoplay));
+}
+DATA.scenarios.forEach((sc, idx) => {
+  const c = document.createElement("button");
+  c.className = "chip"; c.setAttribute("role", "tab");
+  c.innerHTML = `<span class="dot" style="background:${sc.bug ? C.bad : C.leader}"></span><span></span>`;
+  c.lastChild.textContent = sc.short || sc.title;
+  c.onclick = () => selectScenario(idx, true);
+  chips.appendChild(c);
+});
+if (DATA.scenarios.length < 2) chips.style.display = "none";
+
+// ---- main loop ----------------------------------------------------------------------------
+function frame(now) {
+  const dt = Math.min(100, now - lastFrame);
+  lastFrame = now;
+  if (playing && P) {
+    t += dt * speed;
+    const v = P.sc.violation;
+    if (v && t >= v.time && modalShownFor !== P.sc) { t = v.time; setPlaying(false); showModal(); }
+    if (t >= P.end) { t = P.end; setPlaying(false); if (!v && modalShownFor !== P.sc) showModal(); }
+  }
+  if (P) {
+    drawStage(now);
+    drawTrack(hoverX);
+    updateLog();
+    updatePanel();
+    $("clock").textContent = `${(t / 1000).toFixed(3)} / ${(P.end / 1000).toFixed(2)} s`;
+  }
+  requestAnimationFrame(frame);
+}
+new ResizeObserver(() => { if (P) { computeLayout(); buildTrack(); } }).observe($("stage-wrap"));
+window.addEventListener("resize", () => { if (P) { computeLayout(); buildTrack(); } });
+
+// A link such as #double-vote@7000 opens that scenario paused at 7.0 s.
+const [hashKey, hashAt] = location.hash.slice(1).split("@");
+const fromHash = DATA.scenarios.findIndex((s) => s.key === hashKey);
+selectScenario(fromHash >= 0 ? fromHash : 0, false, Boolean(hashAt));
+if (hashAt && !Number.isNaN(+hashAt)) {
+  seek(+hashAt);
+  if (P.sc.violation && t >= P.sc.violation.time) { t = P.sc.violation.time; showModal(); }
+} else {
+  setTimeout(() => { if (!playing && t === 0) setPlaying(true); }, 700);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

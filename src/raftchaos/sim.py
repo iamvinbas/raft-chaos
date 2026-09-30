@@ -18,6 +18,7 @@ from .invariants import InvariantChecker, InvariantViolation, Violation
 from .linearizability import Op, find_violation
 from .messages import Addr, AppendEntries, ClientResponse, Message, RequestVote
 from .node import RaftConfig, RaftNode, Role, Storage
+from .recorder import CUT, CUT_IN_FLIGHT, DELIVERED, LOST, PENDING, RECEIVER_DOWN, Recorder
 from .workload import Workload
 
 
@@ -78,6 +79,7 @@ class RunResult:
     trace: list[str]
     timeline: list[TimelineEvent]
     config: SimConfig
+    recording: Recorder | None = None
 
     @property
     def ok(self) -> bool:
@@ -85,7 +87,13 @@ class RunResult:
 
 
 class Simulator:
-    def __init__(self, seed: int, config: SimConfig | None = None, trace: bool = False) -> None:
+    def __init__(
+        self,
+        seed: int,
+        config: SimConfig | None = None,
+        trace: bool = False,
+        record: bool = False,
+    ) -> None:
         self.seed = seed
         self.config = config or SimConfig()
         self.now = 0
@@ -104,6 +112,7 @@ class Simulator:
         self._last_state: dict[int, tuple[str, int]] = {}
         self._queue: list[tuple[int, int, str, tuple[Any, ...]]] = []
         self._seq = 0
+        self.recorder = Recorder(self) if record else None
         self.workload = Workload(
             self,
             self.config.n_clients,
@@ -170,16 +179,22 @@ class Simulator:
 
     def send(self, src: Addr, dst: Addr, msg: Message) -> None:
         self.stats["msgs_sent"] += 1
+        rec = self.recorder
         if isinstance(src, int) and isinstance(dst, int) and not self.can_talk(src, dst):
             self.stats["msgs_dropped"] += 1
+            if rec is not None:
+                rec.on_send(src, dst, msg, CUT)
             return
         if self.rng.random() < self.drop_prob:
             self.stats["msgs_dropped"] += 1
+            if rec is not None:
+                rec.on_send(src, dst, msg, LOST)
             return
         copies = 2 if self.rng.random() < self.config.dup_prob else 1
         for _ in range(copies):
             delay = self.rng.randint(self.config.latency_min, self.config.latency_max)
-            self.schedule(delay, "deliver", src, dst, msg)
+            mid = rec.on_send(src, dst, msg, PENDING) if rec is not None else -1
+            self.schedule(delay, "deliver", src, dst, msg, mid)
 
     def _dispatch(self, src: int, outbox: list[tuple[Addr, Message]]) -> None:
         outbox = self._tear_broadcast(src, outbox)
@@ -274,15 +289,22 @@ class Simulator:
                 self._dispatch(node_id, node.tick(self.now))
             self.schedule(self.config.tick_ms, "tick", node_id)
         elif kind == "deliver":
-            src, dst, msg = args
+            src, dst, msg, mid = args
+            rec = self.recorder
             if isinstance(dst, str):
+                if rec is not None:
+                    rec.on_deliver(mid, DELIVERED)
                 if isinstance(msg, ClientResponse):
                     self.workload.on_response(int(dst[1:]), msg)
                 return
             if isinstance(src, int) and not self.can_talk(src, dst):
                 self.stats["msgs_dropped"] += 1
+                if rec is not None:
+                    rec.on_deliver(mid, CUT_IN_FLIGHT)
                 return
             node = self.nodes[dst]
+            if rec is not None:
+                rec.on_deliver(mid, DELIVERED if node is not None else RECEIVER_DOWN)
             if node is not None:
                 self._dispatch(dst, node.receive(src, msg, self.now))
                 if isinstance(msg, RequestVote):
@@ -310,6 +332,8 @@ class Simulator:
             self.now = time
             self._handle(kind, args)
             self._observe()
+            if self.recorder is not None:
+                self.recorder.on_step()
             self.checker.check(self)
         self.now = end
 
@@ -370,8 +394,11 @@ class Simulator:
             self.trace_log or [],
             self.timeline,
             self.config,
+            self.recorder,
         )
 
 
-def run_simulation(seed: int, config: SimConfig | None = None, trace: bool = False) -> RunResult:
-    return Simulator(seed, config, trace).run()
+def run_simulation(
+    seed: int, config: SimConfig | None = None, trace: bool = False, record: bool = False
+) -> RunResult:
+    return Simulator(seed, config, trace, record).run()
