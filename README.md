@@ -271,14 +271,29 @@ heals and every node restarts), then the **final checks** (liveness and lineariz
 ### Raft roles
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Follower
-    Follower --> Candidate: election timeout
-    Candidate --> Candidate: split vote, timeout
-    Candidate --> Leader: majority of votes
-    Candidate --> Follower: sees current leader or higher term
-    Leader --> Follower: sees higher term
+flowchart LR
+    F(["<b>Follower</b><br/>votes and appends entries"])
+    C(["<b>Candidate</b><br/>asks for votes"])
+    L(["<b>Leader</b><br/>replicates the log"])
+
+    F -- "election timeout" --> C
+    C -- "majority of votes" --> L
+    C -- "higher term or<br/>current leader seen" --> F
+    L -- "higher term seen" --> F
+
+    classDef follower fill:#c5d0e0,stroke:#5b6b85,color:#1f2430
+    classDef candidate fill:#f6d58f,stroke:#a97a1a,color:#1f2430
+    classDef leader fill:#8fd1a8,stroke:#2e7d4f,color:#1f2430
+    class F follower
+    class C candidate
+    class L leader
 ```
+
+| Role | What it does |
+| --- | --- |
+| Follower | Grants at most one vote per term and appends entries sent by the leader. |
+| Candidate | Starts an election in a new term. After a split vote it times out and tries again in the next term. |
+| Leader | Accepts client requests, replicates them, and commits once a majority has them. |
 
 ## Determinism: same seed, same run
 
