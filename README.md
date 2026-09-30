@@ -25,8 +25,9 @@ the exact same failure, every time.
 - **No false alarms:** a correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5.
 - **Bugs in its own tooling:** the simulator caught two real defects in this project (duplicated
   requests applied twice, and a wrong assumption in the checker), written up [below](#bugs-the-simulator-found-in-this-project).
-- **Also works for real:** the same node runs over TCP. On three local processes, `kill -9` on the
-  leader and a follower during a run still gave a linearizable history of 1285 operations.
+- **Also works for real:** the same node runs over TCP. In Docker, with `kill -9`, `tc netem` and
+  an `iptables` partition applied during the run, the history of 3167 operations was still
+  linearizable. The run also exposed a weakness (no PreVote) that the README documents.
 - **SRE view:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
 - Standard library only at runtime, strict `mypy`, CI on Python 3.10 and 3.12.
 
@@ -181,8 +182,9 @@ OK: the history is linearizable
 ```
 
 Setup, the Docker Compose cluster and the chaos script are in
-[docs/real-cluster.md](docs/real-cluster.md). The Docker demo is written but has not been run
-end to end yet.
+[docs/real-cluster.md](docs/real-cluster.md). The Docker chaos demo ran end to end: `kill -9`,
+`tc netem` and an `iptables` partition, with a linearizable history of 3167 operations. It also
+exposed a real weakness, term inflation without PreVote, described there.
 
 ## Architecture
 
@@ -358,8 +360,10 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 **Current limitations**
 
 - No log compaction or snapshots, and no cluster membership changes.
-- The simulator uses a simulated network. The real runtime is tested on localhost only, and the
-  Docker chaos script has not been run yet.
+- The simulator uses a simulated network. The real runtime was run on localhost and once in
+  Docker on macOS; the Docker chaos script is not part of CI.
+- No PreVote: a node that was partitioned comes back with an inflated term and forces needless
+  elections (see [docs/real-cluster.md](docs/real-cluster.md)). Safety is unaffected.
 - No authentication or TLS on the node ports.
 - The default profile misses two of the six planted bugs; use `--profile adversarial`.
 - Single-key operations only; the linearizability checker is exponential in the worst case.
@@ -369,7 +373,7 @@ timelines, a real TCP runtime with durable storage, and a linearizability check 
 
 **Planned**
 
-- [ ] Run and record the Docker chaos demo end to end
+- [ ] PreVote, proven with the simulator (an isolated node must not disturb the leader)
 - [ ] Interactive web visualiser (static SVG timelines exist)
 - [ ] Snapshots and cluster membership changes
 

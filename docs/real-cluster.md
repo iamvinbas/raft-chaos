@@ -44,6 +44,37 @@ docker compose up -d --build
 ./scripts/chaos-demo.sh          # exit code 0 means the history was linearizable
 ```
 
-> The Docker setup is written and the compose file validates, but the demo has not been run
-> end to end yet. The localhost run above is the tested path. The node ports have no
-> authentication or TLS, so this is a demo, not a deployment.
+Result of one run on Docker Desktop (macOS, three containers, 45 s of load):
+
+```console
+$ ./scripts/chaos-demo.sh
+== cluster is up, leader is node0
+== fault 1: kill -9 the leader (node0)
+== restarting node0 (it recovers term and log from its volume)
+== fault 2: 150ms delay, 15% packet loss on node1
+== fault 3: partition node2 from the others
+== healing the partition
+3167 operations acknowledged, 0 with unknown outcome, 45.6s
+OK: the history is linearizable
+{"id": 0, "role": "follower", "term": 69, "leader": 1, "commit_index": 3190, ...}
+{"id": 1, "role": "leader", "term": 69, "leader": 1, "commit_index": 3190, ...}
+{"id": 2, "role": "follower", "term": 69, "leader": 1, "commit_index": 3190, ...}
+```
+
+Safety held: the history is linearizable and all three logs agree. The final term is not
+small, though, and that is a real finding.
+
+### Finding: term inflation without PreVote
+
+A node cut off from the others cannot win an election, but it keeps timing out and raising its
+term. Measured on the running cluster, isolating node2 with `iptables` for 8 s moved the term
+from 69 to about 107. When the partition healed, that higher term reached the leader, which
+stepped down. Leadership then changed twice within six seconds (node1, then node2, then node0,
+term 110) even though a healthy leader existed the whole time.
+
+This is the known weakness of Raft without the PreVote extension (Ongaro's thesis, section 9.6):
+a rejoining node disrupts a stable cluster. Data stays safe, but availability dips. Adding PreVote
+is on the roadmap; the simulator would be the way to prove it, by checking that an isolated node
+no longer forces elections.
+
+> The node ports have no authentication or TLS, so this is a demo, not a deployment.

@@ -3,6 +3,7 @@
 #   ./scripts/chaos-demo.sh
 x-node: &node
   build: .
+  image: raft-chaos:latest # one image for every service
   cap_add: [NET_ADMIN] # lets `tc` and `iptables` run inside the container
   restart: "no"
 
