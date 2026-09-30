@@ -18,6 +18,18 @@ duplication. Every step is checked against Raft's safety invariants and a
 linearizability checker. When something breaks, you get a **seed** that replays
 the exact same failure, every time.
 
+## Results at a glance
+
+- **All 6 planted Raft bugs are found**, each with a seed that replays the failure. Random faults
+  find 4; targeted faults find the other 2 (double vote after a restart, and Figure 8 of the Raft paper).
+- **No false alarms:** a correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5.
+- **Bugs in its own tooling:** the simulator caught two real defects in this project (duplicated
+  requests applied twice, and a wrong assumption in the checker), written up [below](#bugs-the-simulator-found-in-this-project).
+- **Also works for real:** the same node runs over TCP. On three local processes, `kill -9` on the
+  leader and a follower during a run still gave a linearizable history of 1285 operations.
+- **SRE view:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
+- Standard library only at runtime, strict `mypy`, CI on Python 3.10 and 3.12.
+
 <div align="center">
 
 <img src="docs/timeline-chaos.svg" alt="Timeline of a correct Raft cluster under partitions and crashes" width="100%">
@@ -134,56 +146,16 @@ The correct node passes 2000 adversarial seeds with 3 nodes and 2000 with 5 node
 
 ## Metrics, SLOs and anomalies
 
-The simulator also measures the service the way a client sees it, on the same virtual clock,
-so the numbers reproduce from a seed.
+The simulator also measures the service the way a client sees it, on the same virtual clock, so
+the numbers reproduce from a seed. `raftchaos metrics`, `slo`, `anomalies` and `timeline` give:
 
-**Prometheus metrics.** `raftchaos metrics --seed 7` prints the text exposition format
-(operation outcomes, a latency histogram, availability, longest outage, leader changes).
-Availability is probed in 250 ms windows: a window is up if at least one operation succeeded.
-
-**SLO report.** `raftchaos slo --seed 7` runs the same seed twice, once without faults and once
-under chaos, and reports how much of each error budget was used:
-
-```console
-$ raftchaos slo --seed 7
-seed 7, 3 nodes, steady state (no faults)
-SLO                target     actual  budget used  status
-availability        0.900      1.000          0%  MET
-latency-p99         250ms       45ms         18%  MET
-max-outage         2000ms      217ms         11%  MET
-
-seed 7, 3 nodes, under chaos
-SLO                target     actual  budget used  status
-availability        0.900      0.812        188%  MISSED
-latency-p99         250ms       77ms         31%  MET
-max-outage         2000ms     1051ms         53%  MET
-```
-
-The targets are examples, not claims about Raft: the point is that the budget is measured, so
-a change that makes the cluster slower to recover shows up as a number instead of a hunch.
-
-**Anomaly detection.** A robust z-score (median and MAD) over per-window throughput and latency
-flags unusual windows, and each flag is attributed to the injected faults active around it:
-
-```console
-$ raftchaos anomalies --seed 7
-seed 7: 3 of 16 windows flagged
-   2000-2500 ms  throughput drop  score -0.9  faults: crash, partition
-   3000-3500 ms  latency spike    score +4.5  faults: crash, partition
-   5500-6000 ms  latency spike    score +4.7  faults: isolate
-same seed without faults: 0 of 16 windows flagged
-```
-
-Under chaos nearly every window is close to some fault, so "did it flag a faulty window"
-would be a meaningless score. The check that means something is the flag rate with and without
-faults. Over seeds 0-29 the detector flags 7 of 480 windows (1.5%) on fault-free runs and 119
-of 480 (25%) under chaos. It is a baseline detector, not a production one. A window with no
-successful operation at all is flagged even when its score is below the 3.5 threshold, which is
-why the first line above shows -0.9.
-
-**Timelines.** `raftchaos timeline --seed 1 --bug double_vote --out run.svg` draws a run: role of
-every node over time, network faults, successful client operations, and a red line where an
-invariant broke.
+- **Prometheus metrics:** operation outcomes, latency histogram, availability, longest outage.
+- **SLO error budgets**, steady state against chaos. On seed 7 the cluster meets all three
+  objectives without faults; under chaos availability is 0.812 against a 0.90 target (188% of the
+  budget), while p99 latency and the longest outage stay within budget.
+- **Anomaly detection** that names the injected fault behind each flagged window. It flags 1.5% of
+  windows on fault-free runs and 25% under chaos (seeds 0-29): a baseline detector, not a production one.
+- **SVG timelines**, like the one below, where a red line marks the moment an invariant broke.
 
 <div align="center">
 
@@ -191,55 +163,26 @@ invariant broke.
 
 </div>
 
+Commands, sample output and how each number is computed: [docs/observability.md](docs/observability.md).
+
 ## Run it for real
 
-The simulator tests the protocol. The same `RaftNode` also runs as a real service over TCP:
-newline-delimited JSON frames, the term, vote and log fsynced to disk before any reply is sent,
-and a `/metrics` (Prometheus) and `/status` HTTP endpoint per node.
+The simulator tests the protocol. The same `RaftNode` also runs as a real service over TCP, with
+its term, vote and log fsynced to disk before any reply is sent, and Prometheus `/metrics` on
+every node. `raftchaos verify` then drives concurrent clients against the live cluster and checks
+the recorded history with the same linearizability checker.
 
-```bash
-rm -rf /tmp/raft   # a previous run's term and log would otherwise be reloaded
-PEERS=127.0.0.1:7100,127.0.0.1:7101,127.0.0.1:7102
-for i in 0 1 2; do
-  raftchaos node --id $i --peers $PEERS --listen 127.0.0.1:$((7100+i)) \
-      --data-dir /tmp/raft --metrics-port $((9100+i)) &
-done
-
-raftchaos kv --nodes $PEERS put greeting ciao
-raftchaos kv --nodes $PEERS get greeting          # ciao
-raftchaos status --metrics 127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102
-```
-
-`raftchaos verify` closes the loop: it drives concurrent clients against the real cluster and
-checks the recorded history with the same linearizability checker the simulator uses. Here it ran
-while the leader (node 0) was killed with `kill -9` and restarted, then node 1 was killed and
-restarted, on three local processes:
+On three local processes, with the leader and then a follower killed by `kill -9` mid-run:
 
 ```console
 $ raftchaos verify --nodes $PEERS --seconds 14 --clients 3
 1285 operations acknowledged, 0 with unknown outcome, 14.1s
 OK: the history is linearizable
-
-$ raftchaos status --metrics 127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102
-{"id": 0, "role": "follower", "term": 2, "leader": 2, "commit_index": 1289, ...}
-{"id": 1, "role": "follower", "term": 2, "leader": 2, "commit_index": 1289, ...}
-{"id": 2, "role": "leader", "term": 2, "leader": 2, "commit_index": 1289, ...}
 ```
 
-Both restarted nodes recovered their term and log from disk and caught up to the leader.
-
-**Docker.** `docker-compose.yml` runs the three nodes, and `scripts/chaos-demo.sh` breaks them
-while `verify` runs: `kill -9` on the leader, latency and packet loss with `tc netem`, and a
-partition with `iptables`. Add `--profile monitoring` for a Prometheus instance.
-
-```bash
-docker compose up -d --build
-./scripts/chaos-demo.sh          # exit code 0 means the history was linearizable
-```
-
-> The Docker setup is written and the compose file validates, but the demo has not been run
-> end to end yet. The localhost run above is the tested path. The node ports have no
-> authentication or TLS, so this is a demo, not a deployment.
+Setup, the Docker Compose cluster and the chaos script are in
+[docs/real-cluster.md](docs/real-cluster.md). The Docker demo is written but has not been run
+end to end yet.
 
 ## Architecture
 
@@ -297,6 +240,19 @@ flowchart LR
 | Follower | Grants at most one vote per term and appends entries sent by the leader. |
 | Candidate | Starts an election in a new term. After a split vote it times out and tries again in the next term. |
 | Leader | Accepts client requests, replicates them, and commits once a majority has them. |
+
+## Key terms
+
+| Term | Meaning here |
+| --- | --- |
+| **Raft** | A consensus algorithm: several servers keep the same log of commands, and keep working while a minority fails. |
+| **Term** | Raft's logical clock. Each election starts a new term, and a term has at most one leader. |
+| **Invariant** | A property that must hold at every moment. A violation is always a bug, whatever the network does. |
+| **Linearizability** | The store behaves as if every operation happened at one instant between its start and its reply. A stale read after an acknowledged write breaks it. |
+| **Nemesis** | The part of the simulator that injects faults: partitions, crashes, packet loss. |
+| **Seed** | The integer that fixes every random choice in a run, so a failure can be replayed exactly. |
+| **Deterministic simulation** | Running the system on a virtual clock and a fake network, so runs are fast and reproducible. |
+| **SLO and error budget** | A reliability target (for example 90% availability) and the share of allowed failure a run has used. |
 
 ## Determinism: same seed, same run
 
@@ -378,6 +334,8 @@ raft-chaos/
 │   └── cli.py             # run, hunt, metrics, slo, anomalies, timeline, node, kv, verify
 ├── tests/                 # simulation, linearizability and observability tests
 ├── docs/design.md         # invariants and design decisions
+├── docs/observability.md  # metrics, SLOs, anomaly detection, timelines
+├── docs/real-cluster.md   # running and breaking a real cluster
 ├── docs/*.svg             # timelines used in this README
 ├── Dockerfile, docker-compose.yml, docker/
 ├── scripts/chaos-demo.sh  # kill, tc netem and iptables against the compose cluster
