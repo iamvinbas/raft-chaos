@@ -177,7 +177,9 @@ same seed without faults: 0 of 16 windows flagged
 Under chaos nearly every window is close to some fault, so "did it flag a faulty window"
 would be a meaningless score. The check that means something is the flag rate with and without
 faults. Over seeds 0-29 the detector flags 7 of 480 windows (1.5%) on fault-free runs and 119
-of 480 (25%) under chaos. It is a baseline detector, not a production one.
+of 480 (25%) under chaos. It is a baseline detector, not a production one. A window with no
+successful operation at all is flagged even when its score is below the 3.5 threshold, which is
+why the first line above shows -0.9.
 
 **Timelines.** `raftchaos timeline --seed 1 --bug double_vote --out run.svg` draws a run: role of
 every node over time, network faults, successful client operations, and a red line where an
@@ -196,6 +198,7 @@ newline-delimited JSON frames, the term, vote and log fsynced to disk before any
 and a `/metrics` (Prometheus) and `/status` HTTP endpoint per node.
 
 ```bash
+rm -rf /tmp/raft   # a previous run's term and log would otherwise be reloaded
 PEERS=127.0.0.1:7100,127.0.0.1:7101,127.0.0.1:7102
 for i in 0 1 2; do
   raftchaos node --id $i --peers $PEERS --listen 127.0.0.1:$((7100+i)) \
@@ -299,8 +302,8 @@ flowchart LR
 
 `node.py` is a **pure state machine**: it takes an event (message, tick) and returns
 messages to send. It does no I/O and never reads a clock or a global RNG. All time is
-virtual and all randomness (latency, drops, duplicates, nemesis choices) comes from one
-seeded generator in `sim.py`.
+virtual and all randomness (latency, drops, duplicates, nemesis choices, client behaviour)
+comes from seeded generators derived from the one seed, in `sim.py`.
 
 So the result of a run is a function of `(seed, config, bugs)` and nothing else. A failure
 found on one machine replays identically on another, which turns "it failed once in CI"
@@ -334,7 +337,8 @@ Seeds are for 3 nodes. With 5 nodes the adversarial profile finds all six as wel
 targeted profile exists: a test suite that cannot find planted bugs cannot be trusted to find
 unplanted ones.
 
-Control result: a correct node stayed clean on all 1500 seeds with 3 nodes and 1000 seeds with 5 nodes.
+Control result: with the default profile a correct node stayed clean on 1500 seeds with 3 nodes
+and 1000 seeds with 5 nodes.
 
 ## Bugs the simulator found in this project
 
@@ -376,14 +380,14 @@ raft-chaos/
 ├── docs/design.md         # invariants and design decisions
 ├── docs/*.svg             # timelines used in this README
 ├── Dockerfile, docker-compose.yml, docker/
-└── scripts/chaos-demo.sh  # kill, tc netem and iptables against the compose cluster
+├── scripts/chaos-demo.sh  # kill, tc netem and iptables against the compose cluster
 └── .github/workflows/ci.yml
 ```
 
 ## Testing and CI
 
 ```bash
-pytest -q          # unit + simulation tests (incl. the four findable injected bugs must be caught)
+pytest -q          # unit, simulation and real-TCP tests; the planted bugs must be caught
 ruff check .       # lint
 ruff format --check .
 mypy               # strict type checking
