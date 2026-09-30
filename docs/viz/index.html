@@ -90,6 +90,9 @@ body.live .replay-only { display: none !important; }
 .ctl-row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
 .ctl-row .btn { flex: 1; }
 #live-msg { margin: 8px 0 0; font-size: 12px; color: var(--muted); min-height: 16px; }
+#watch-only { display: none; margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
+body.no-faults #node-ctl, body.no-faults .fault-row { display: none; }
+body.no-faults #watch-only { display: block; }
 .conn { float: right; font-weight: 600; letter-spacing: 0; text-transform: none; }
 #golive[aria-pressed="true"] { border-color: var(--bad); color: #ffb3b8; }
 #golive[aria-pressed="true"]::before { content: "● "; color: var(--bad); }
@@ -170,9 +173,11 @@ body.live .replay-only { display: none !important; }
       </dl>
     </section>
     <section class="panel live-only" id="live-panel">
-      <h3>Break it <span class="conn" id="conn"></span></h3>
+      <h3><span id="live-title">Break it</span> <span class="conn" id="conn"></span></h3>
+      <p id="watch-only">Watch only: started with <code>--no-faults</code> or without a compose file.
+        Break the cluster by hand, for example <code>kill -9</code> one node's process.</p>
       <div class="ctl-grid" id="node-ctl"></div>
-      <div class="ctl-row">
+      <div class="ctl-row fault-row">
         <button class="btn danger" data-act="kill_leader">Kill the leader</button>
         <button class="btn" data-act="heal">Heal network</button>
       </div>
@@ -1018,9 +1023,18 @@ function ingest(raw) {
   lastSnap = s;
   // history check finished
   const status = s.check.status;
-  if (status !== lastCheck && (status === "ok" || status === "violation")) showCheck(s.check);
+  // Only announce a check that finishes while this page is open, not an older result.
+  if (prev && status !== lastCheck && (status === "ok" || status === "violation")) showCheck(s.check);
   lastCheck = status;
   $("load-btn").textContent = s.load.running ? "Stop load" : "Start load";
+  if (!prev && !s.faults_enabled) {
+    $("about").innerHTML = "<b>Live cluster, watch only.</b> Each server is a real process, polled every 100 ms. " +
+      "This bridge was started without fault injection: break the cluster by hand, for example " +
+      "<code>kill -9</code> one node's process, and watch it recover. Dots show the real traffic on each link, sampled, not individual messages.";
+    $("footer").textContent = "live mode, watch only · served by raftchaos live";
+  }
+  document.body.classList.toggle("no-faults", !s.faults_enabled);
+  $("live-title").textContent = s.faults_enabled ? "Break it" : "Load and checks";
 }
 
 function synthesize(prev, s) {

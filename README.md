@@ -101,6 +101,25 @@ Node state is exact; the dots are drawn from per-link frame counters, so they sh
 volume rather than single messages. The bridge binds to 127.0.0.1, rejects foreign `Host` headers
 and requires a per-run token on every call, so another website cannot drive your Docker.
 
+**What each mode needs.**
+
+| Mode | Where it runs | Needs |
+| --- | --- | --- |
+| Replay | anywhere, including the [public page](https://iamvinbas.github.io/raft-chaos/viz/) | nothing: the recorded runs are inside the page |
+| Live, with fault buttons | `raftchaos live` on your machine | the Docker Compose cluster, since the buttons run `docker compose` |
+| Live, watch only | `raftchaos live --no-faults --nodes … --metrics …` | any running cluster, for example three `raftchaos node` processes; break it by hand with `kill -9` |
+
+Run one cluster at a time on a given set of ports. On macOS, local nodes can bind
+`127.0.0.1:7100` while Docker holds the same port on all addresses, and the bridge would then
+silently read a mix of the two clusters.
+
+**Why the public page has no live mode.** A static page cannot start processes or reach Docker,
+so live mode needs your machine. The browser could run the same `node.py` through Pyodide (Python
+compiled to WebAssembly), and visitors could then break a cluster without installing anything. It
+was left out on purpose: those faults would hit a simulated network and clock, not real processes,
+sockets, `fsync` and `iptables`, which is what live mode exists to show. The simulated side is
+already covered by the replays, which are reproducible and checked by the invariant checker.
+
 Links carry the scene and the moment, for example `viz.html#double-vote@7200`, so a failure can
 be shared exactly. The demo page is committed as [docs/viz/index.html](docs/viz/index.html), and a
 test fails if it drifts from what the code produces.
