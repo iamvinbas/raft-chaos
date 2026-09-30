@@ -44,7 +44,8 @@ docker compose up -d --build
 ./scripts/chaos-demo.sh          # exit code 0 means the history was linearizable
 ```
 
-Result of one run on Docker Desktop (macOS, three containers, 45 s of load):
+Result of one run on Docker Desktop (macOS, three containers, about 46 s of load), with the
+current code:
 
 ```console
 $ ./scripts/chaos-demo.sh
@@ -54,27 +55,39 @@ $ ./scripts/chaos-demo.sh
 == fault 2: 150ms delay, 15% packet loss on node1
 == fault 3: partition node2 from the others
 == healing the partition
-3167 operations acknowledged, 0 with unknown outcome, 45.6s
+4240 operations acknowledged, 0 with unknown outcome, 46.1s
 OK: the history is linearizable
-{"id": 0, "role": "follower", "term": 69, "leader": 1, "commit_index": 3190, ...}
-{"id": 1, "role": "leader", "term": 69, "leader": 1, "commit_index": 3190, ...}
-{"id": 2, "role": "follower", "term": 69, "leader": 1, "commit_index": 3190, ...}
+{"id": 0, "role": "leader", "term": 2, "leader": 0, "commit_index": 4242, ...}
+{"id": 1, "role": "follower", "term": 2, "leader": 0, "commit_index": 4242, ...}
+{"id": 2, "role": "follower", "term": 2, "leader": 0, "commit_index": 4242, ...}
 ```
 
-Safety held: the history is linearizable and all three logs agree. The final term is not
-small, though, and that is a real finding.
+The first run of this script also passed the safety check, but it ended at term 69, with 3167
+operations and a follower still catching up. Three problems were behind that; none broke safety,
+all three cost availability.
 
-### Finding: term inflation without PreVote
+## Findings from the real cluster
 
-A node cut off from the others cannot win an election, but it keeps timing out and raising its
-term. Measured on the running cluster, isolating node2 with `iptables` for 8 s moved the term
-from 69 to about 107. When the partition healed, that higher term reached the leader, which
-stepped down. Leadership then changed twice within six seconds (node1, then node2, then node0,
-term 110) even though a healthy leader existed the whole time.
+| # | Symptom | Root cause | Fix | Before | After |
+| --- | --- | --- | --- | --- | --- |
+| 1 | A node isolated for 8 s came back and forced two leader changes on a healthy cluster | Without PreVote, a node that cannot win keeps raising its term; its high term deposes the leader when it rejoins | PreVote (Raft thesis 9.6), on by default in `raftchaos node` | term 69 to ~107, 2 needless elections | term unchanged, 0 elections |
+| 2 | A rejoining follower caught up at about 40 entries per second | Storage rewrote and fsynced the whole log on every change: O(log size) per message, blocking the event loop | Append-only write-ahead log plus a small metadata file; a torn last line is dropped on load | ~14 s to catch up | under 5 s |
+| 3 | After healing, a deposed leader kept believing it led for 2-3 s | Frames queued during the partition sat in TCP retransmission backoff | `TCP_USER_TIMEOUT` of 1 s on peer sockets, so a dead connection is replaced at once | 2-3 s | converged 0.6 s (leader cut off) and 1.0 s (follower cut off) after healing |
 
-This is the known weakness of Raft without the PreVote extension (Ongaro's thesis, section 9.6):
-a rejoining node disrupts a stable cluster. Data stays safe, but availability dips. Adding PreVote
-is on the roadmap; the simulator would be the way to prove it, by checking that an isolated node
-no longer forces elections.
+Each "before / after" is a single run of the same `iptables` isolation on the Docker cluster, so
+the numbers show the order of magnitude, not a benchmark.
+
+Finding 1 is also reproduced in the simulator, where it can be measured over many seeds:
+
+```console
+$ raftchaos experiment prevote --seeds 50
+one follower isolated at 1500 ms, network healed at 4500 ms, 3 nodes, seeds 0-49
+                safe  disrupted  term +  outage avg  outage max
+no PreVote    50/50      50/50     12.6       155ms       519ms
+PreVote       50/50       0/50      0.0       107ms       427ms
+```
+
+The same holds with 5 nodes (50/50 disrupted without PreVote, 0/50 with it). The visualiser
+has both runs side by side: scenes "Isolated node, no PreVote" and "Same fault, with PreVote".
 
 > The node ports have no authentication or TLS, so this is a demo, not a deployment.

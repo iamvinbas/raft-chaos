@@ -28,8 +28,10 @@ the exact same failure, every time.
 - **Bugs in its own tooling:** the simulator caught two real defects in this project (duplicated
   requests applied twice, and a wrong assumption in the checker), written up [below](#bugs-the-simulator-found-in-this-project).
 - **Also works for real:** the same node runs over TCP. In Docker, with `kill -9`, `tc netem` and
-  an `iptables` partition applied during the run, the history of 3167 operations was still
-  linearizable. The run also exposed a weakness (no PreVote) that the README documents.
+  an `iptables` partition applied during the run, the history of 4240 operations was linearizable.
+- **Found, measured, fixed:** the real cluster exposed three availability problems: term inflation,
+  a quadratic storage layer and TCP retransmission stalls. Each was fixed and remeasured; PreVote
+  was also proven in the simulator (50/50 runs disrupted without it, 0/50 with it).
 - **See it happen:** an interactive visualiser replays any run, message by message, and stops on
   the event that breaks an invariant.
 - **SRE view:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
@@ -51,7 +53,7 @@ starting elections (term 9) while nodes 1 and 2 elect a leader and keep committi
 `raftchaos viz` turns any run into an interactive page: one HTML file, no server, no build step.
 
 ```bash
-raftchaos viz --out viz.html --open                              # the five demo scenes
+raftchaos viz --out viz.html --open                              # the seven demo scenes
 raftchaos viz --seed 4 --bug forget_vote_on_restart --profile adversarial --out run.html --open
 ```
 
@@ -110,6 +112,7 @@ raftchaos anomalies --seed 7              # anomalous windows, attributed to fau
 raftchaos metrics --seed 7                # Prometheus text format
 raftchaos timeline --seed 7 --out run.svg # draw the run
 raftchaos viz --out viz.html --open       # interactive visualiser
+raftchaos experiment prevote --seeds 50   # isolated node, with and without PreVote
 raftchaos bugs                            # list injectable bugs
 ```
 
@@ -227,8 +230,18 @@ OK: the history is linearizable
 
 Setup, the Docker Compose cluster and the chaos script are in
 [docs/real-cluster.md](docs/real-cluster.md). The Docker chaos demo ran end to end: `kill -9`,
-`tc netem` and an `iptables` partition, with a linearizable history of 3167 operations. It also
-exposed a real weakness, term inflation without PreVote, described there.
+`tc netem` and an `iptables` partition, with a linearizable history of 4240 operations.
+
+Running it for real also found three problems the simulator could not see or had not been asked
+about, each fixed and remeasured:
+
+| Symptom | Fix | Before | After |
+| --- | --- | --- | --- |
+| A rejoining node forced needless elections | PreVote | term 69, 2 extra elections | term 2, none |
+| Slow catch-up after a partition | Append-only write-ahead log | ~14 s | under 5 s |
+| Stale leader after healing | `TCP_USER_TIMEOUT` on peer sockets | 2-3 s | under 1 s |
+
+Details, and the PreVote experiment over 50 seeds: [docs/real-cluster.md](docs/real-cluster.md#findings-from-the-real-cluster).
 
 ## Architecture
 
@@ -298,6 +311,7 @@ flowchart LR
 | **Nemesis** | The part of the simulator that injects faults: partitions, crashes, packet loss. |
 | **Seed** | The integer that fixes every random choice in a run, so a failure can be replayed exactly. |
 | **Deterministic simulation** | Running the system on a virtual clock and a fake network, so runs are fast and reproducible. |
+| **PreVote** | An extra round before an election: a node first asks whether it *would* get votes, without changing anyone's term. A node that cannot win never disturbs the others. |
 | **SLO and error budget** | A reliability target (for example 90% availability) and the share of allowed failure a run has used. |
 
 ## Determinism: same seed, same run
@@ -377,9 +391,10 @@ raft-chaos/
 │   ├── anomaly.py         # robust z-score detector, fault attribution
 │   ├── timeline_svg.py    # SVG timeline of roles, faults and client successes
 │   ├── recorder.py        # opt-in recording of a run for replay
+│   ├── experiments.py     # scripted-fault experiments (PreVote)
 │   ├── viz/               # the web visualiser: template + builder
 │   ├── runtime/           # the same node over real TCP: server, client, storage, verify
-│   └── cli.py             # run, hunt, viz, metrics, slo, anomalies, timeline, node, kv, verify
+│   └── cli.py             # run, hunt, viz, experiment, metrics, slo, anomalies, …
 ├── tests/                 # simulation, linearizability and observability tests
 ├── docs/design.md         # invariants and design decisions
 ├── docs/observability.md  # metrics, SLOs, anomaly detection, timelines
@@ -413,19 +428,18 @@ CI runs lint, strict mypy and pytest on Python 3.10 and 3.12 for every push and 
 - No log compaction or snapshots, and no cluster membership changes.
 - The simulator uses a simulated network. The real runtime was run on localhost and once in
   Docker on macOS; the Docker chaos script is not part of CI.
-- No PreVote: a node that was partitioned comes back with an inflated term and forces needless
-  elections (see [docs/real-cluster.md](docs/real-cluster.md)). Safety is unaffected.
+- PreVote is on by default in the real runtime and off by default in the simulator, so the
+  published seeds stay reproducible. `--pre-vote` turns it on in any simulator command.
 - No authentication or TLS on the node ports.
 - The default profile misses two of the six planted bugs; use `--profile adversarial`.
 - Single-key operations only; the linearizability checker is exponential in the worst case.
 
 **Done since the first release:** Prometheus metrics, SLO report, anomaly detection, SVG
 timelines, a real TCP runtime with durable storage, a linearizability check of a live cluster,
-and an interactive visualiser.
+an interactive visualiser, and PreVote.
 
 **Planned**
 
-- [ ] PreVote, proven with the simulator (an isolated node must not disturb the leader)
 - [ ] Live mode for the visualiser, attached to a real cluster
 - [ ] Snapshots and cluster membership changes
 

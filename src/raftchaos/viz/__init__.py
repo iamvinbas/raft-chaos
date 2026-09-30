@@ -12,6 +12,7 @@ from importlib import resources
 from typing import Any
 
 from ..bugs import Bugs
+from ..experiments import isolation_config
 from ..sim import SimConfig, run_simulation
 
 
@@ -25,6 +26,7 @@ class Scenario:
     bug: str | None = None
     profile: str = "default"
     nodes: int = 3
+    experiment: str | None = None  # "isolation" or "isolation+prevote": a scripted fault
 
 
 DEMO_SCENARIOS: tuple[Scenario, ...] = (
@@ -66,6 +68,26 @@ DEMO_SCENARIOS: tuple[Scenario, ...] = (
         "adversarial",
     ),
     Scenario(
+        "no-prevote",
+        "Isolated node, no PreVote",
+        "A cut-off follower comes back and disrupts a healthy leader",
+        "Node traffic to one follower is cut for three seconds. It cannot win an election, but it "
+        "keeps starting them and raising its term. When the link heals, its high term forces the "
+        "working leader to step down for nothing. Found running the real cluster in Docker.",
+        0,
+        experiment="isolation",
+    ),
+    Scenario(
+        "prevote",
+        "Same fault, with PreVote",
+        "The same fault with PreVote: nothing happens",
+        "Same seed, same fault. Before raising its term the isolated follower asks for pre-votes; "
+        "nobody can hear it, and after healing the others refuse because their leader is alive. "
+        "Its term never moves and the leader keeps its job.",
+        0,
+        experiment="isolation+prevote",
+    ),
+    Scenario(
         "stale-log",
         "Bug: stale log vote",
         "Planted bug: voting for a candidate with a stale log",
@@ -93,11 +115,16 @@ def make_config(
 
 
 def record(scenario: Scenario, duration: int | None = None) -> dict[str, Any]:
-    config = make_config(scenario.nodes, scenario.bug, scenario.profile, duration)
+    if scenario.experiment:
+        config = isolation_config("prevote" in scenario.experiment, scenario.nodes)
+    else:
+        config = make_config(scenario.nodes, scenario.bug, scenario.profile, duration)
     result = run_simulation(scenario.seed, config, record=True)
     assert result.recording is not None
     data = result.recording.export(result, scenario.title, scenario.bug, scenario.profile)
     data.update(key=scenario.key, short=scenario.short, description=scenario.description)
+    if scenario.experiment:
+        data["reproduce"] = f"raftchaos experiment prevote --seeds 1 --start {scenario.seed}"
     return data
 
 

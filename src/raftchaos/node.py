@@ -23,6 +23,8 @@ from .messages import (
     LogEntry,
     Message,
     Outbox,
+    PreVote,
+    PreVoteReply,
     RequestVote,
     RequestVoteReply,
 )
@@ -40,6 +42,9 @@ class RaftConfig:
     election_timeout_max: int = 300
     heartbeat_interval: int = 50
     max_batch: int = 16  # entries per AppendEntries
+    # Ask for pre-votes before starting an election, so a node that cannot win (for example
+    # one cut off by a partition) never raises its term and never disrupts a healthy leader.
+    pre_vote: bool = False
 
 
 @dataclass
@@ -85,6 +90,9 @@ class RaftNode:
         self.state_machine: dict[object, object] = {}
         self.sessions: dict[str, tuple[int, object]] = {}  # client -> (last req_id, its result)
         self.votes: set[int] = set()
+        self.prevotes: set[int] = set()
+        self.prevote_term: int | None = None  # the term of the pre-vote round in progress
+        self.last_leader_contact = -(10**9)
         self.next_index: dict[int, int] = {}
         self.match_index: dict[int, int] = {}
         self.pending: dict[int, tuple[Addr, int, int]] = {}  # log index -> (client, req_id, term)
@@ -122,7 +130,10 @@ class RaftNode:
                 self._broadcast_append(out)
                 self.next_heartbeat = now + self.config.heartbeat_interval
         elif now >= self.election_deadline:
-            self._start_election(now, out)
+            if self.config.pre_vote:
+                self._start_pre_vote(now, out)
+            else:
+                self._start_election(now, out)
         return out
 
     def receive(self, src: Addr, msg: Message, now: int) -> Outbox:
@@ -134,9 +145,16 @@ class RaftNode:
             return out  # nodes never consume client responses
 
         assert isinstance(src, int)
-        if msg.term > self.storage.current_term:
+        if isinstance(msg, PreVote):
+            # A pre-vote carries a term the candidate has not started: it must not move ours.
+            self._on_pre_vote(src, msg, now, out)
+            return out
+        granted_pre_vote = isinstance(msg, PreVoteReply) and msg.granted
+        if msg.term > self.storage.current_term and not granted_pre_vote:
             self._step_down(msg.term)
-        if isinstance(msg, RequestVote):
+        if isinstance(msg, PreVoteReply):
+            self._on_pre_vote_reply(src, msg, now, out)
+        elif isinstance(msg, RequestVote):
             self._on_request_vote(src, msg, now, out)
         elif isinstance(msg, RequestVoteReply):
             self._on_vote_reply(src, msg, now, out)
@@ -160,9 +178,22 @@ class RaftNode:
         self.role = Role.FOLLOWER
         self.leader_id = None
         self.votes = set()
+        self.prevote_term = None
         self.pending.clear()
 
+    def _start_pre_vote(self, now: int, out: Outbox) -> None:
+        self.prevote_term = self.current_term + 1
+        self.prevotes = {self.id}
+        self._reset_election_timer(now)
+        if len(self.prevotes) >= self.majority:
+            self._start_election(now, out)
+            return
+        req = PreVote(self.prevote_term, self.id, self.last_index, self.term_at(self.last_index))
+        for peer in self.peers:
+            out.append((peer, req))
+
     def _start_election(self, now: int, out: Outbox) -> None:
+        self.prevote_term = None
         self.storage.current_term += 1
         self.storage.voted_for = self.id
         self.role = Role.CANDIDATE
@@ -192,14 +223,37 @@ class RaftNode:
 
     # ---- elections ---------------------------------------------------------------------
 
+    def _log_ok(self, last_log_term: int, last_log_index: int) -> bool:
+        """Is a candidate's log at least as up to date as ours?"""
+        mine = (self.term_at(self.last_index), self.last_index)
+        return (last_log_term, last_log_index) >= mine or self.bugs.stale_log_vote
+
+    def _on_pre_vote(self, src: int, msg: PreVote, now: int, out: Outbox) -> None:
+        # Refuse while we have a live leader: that is what keeps a rejoining node from
+        # forcing an election on a cluster that is working fine.
+        leader_alive = self.role is Role.LEADER or (
+            self.leader_id is not None
+            and now - self.last_leader_contact < self.config.election_timeout_min
+        )
+        grant = (
+            msg.term >= self.current_term
+            and not leader_alive
+            and self._log_ok(msg.last_log_term, msg.last_log_index)
+        )
+        term = msg.term if grant else self.current_term
+        out.append((src, PreVoteReply(term, grant, msg.term)))
+
+    def _on_pre_vote_reply(self, src: int, msg: PreVoteReply, now: int, out: Outbox) -> None:
+        if self.role is Role.LEADER or msg.for_term != self.prevote_term or not msg.granted:
+            return
+        self.prevotes.add(src)
+        if len(self.prevotes) >= self.majority:
+            self._start_election(now, out)
+
     def _on_request_vote(self, src: int, msg: RequestVote, now: int, out: Outbox) -> None:
         grant = False
         if msg.term >= self.current_term:
-            up_to_date = (msg.last_log_term, msg.last_log_index) >= (
-                self.term_at(self.last_index),
-                self.last_index,
-            )
-            up_to_date = up_to_date or self.bugs.stale_log_vote
+            up_to_date = self._log_ok(msg.last_log_term, msg.last_log_index)
             free_vote = self.storage.voted_for in (None, msg.candidate_id)
             free_vote = free_vote or self.bugs.double_vote
             if free_vote and up_to_date:
@@ -225,6 +279,8 @@ class RaftNode:
 
         self.role = Role.FOLLOWER
         self.leader_id = msg.leader_id
+        self.last_leader_contact = now
+        self.prevote_term = None
         self._reset_election_timer(now)
 
         prev = msg.prev_log_index

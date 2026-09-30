@@ -12,6 +12,8 @@ from raftchaos.messages import (
     ClientRequest,
     ClientResponse,
     LogEntry,
+    PreVote,
+    PreVoteReply,
     RequestVote,
     RequestVoteReply,
 )
@@ -41,6 +43,8 @@ small = st.integers(0, 10**6)
 messages = st.one_of(
     st.builds(RequestVote, small, small, small, small),
     st.builds(RequestVoteReply, small, st.booleans()),
+    st.builds(PreVote, small, small, small, small),
+    st.builds(PreVoteReply, small, st.booleans(), small),
     st.builds(
         AppendEntries, small, small, small, small, st.lists(entries, max_size=5).map(tuple), small
     ),
@@ -74,21 +78,60 @@ def test_decode_rejects_malformed_frames(line):
 # ---- storage -------------------------------------------------------------------------------
 
 
-def test_storage_persists_only_changes_and_reloads(tmp_path):
-    path = tmp_path / "n.json"
-    store = FileStorage(path)
-    assert store.sync() is True  # the first sync creates the file
-    assert store.sync() is False  # unchanged state is not rewritten
+def entry(term, value):
+    return LogEntry(term, ("put", "k", value), "c1", value)
+
+
+def test_storage_persists_changes_and_reloads(tmp_path):
+    base = tmp_path / "n"
+    store = FileStorage(base)
+    assert store.sync() is False  # nothing changed yet
     store.state.current_term = 3
     store.state.voted_for = 1
-    store.state.log.append(LogEntry(3, ("put", "k", "v"), "c1", 7))
+    store.state.log.extend([entry(3, 1), entry(3, 2)])
     assert store.sync() is True
-    assert store.sync() is False
-    reloaded = FileStorage(path)
-    assert reloaded.state.current_term == 3
-    assert reloaded.state.voted_for == 1
+    assert store.sync() is False  # unchanged state is not rewritten
+    reloaded = FileStorage(base)
+    assert (reloaded.state.current_term, reloaded.state.voted_for) == (3, 1)
     assert reloaded.state.log == store.state.log
-    assert not path.with_suffix(".tmp").exists()
+    assert not reloaded.torn_tail
+
+
+def test_appends_only_write_new_entries(tmp_path):
+    store = FileStorage(tmp_path / "n")
+    store.state.log.extend(entry(1, i) for i in range(50))
+    store.sync()
+    size = store.log_path.stat().st_size
+    store.state.log.append(entry(1, 50))
+    store.sync()
+    grown = store.log_path.stat().st_size - size
+    assert 0 < grown < 100  # one line, not a rewrite of 51 entries
+
+
+def test_conflicting_suffix_is_truncated(tmp_path):
+    base = tmp_path / "n"
+    store = FileStorage(base)
+    store.state.log.extend([entry(1, 1), entry(1, 2), entry(1, 3)])
+    store.sync()
+    del store.state.log[1:]  # what a follower does on a conflict
+    store.state.log.append(entry(2, 9))
+    store.sync()
+    assert FileStorage(base).state.log == [entry(1, 1), entry(2, 9)]
+
+
+def test_torn_last_line_is_dropped_on_load(tmp_path):
+    base = tmp_path / "n"
+    store = FileStorage(base)
+    store.state.log.extend([entry(1, 1), entry(1, 2)])
+    store.sync()
+    with open(store.log_path, "ab") as handle:
+        handle.write(b'{"term":1,"command":["put","k"')  # crash in the middle of a write
+    reloaded = FileStorage(base)
+    assert reloaded.torn_tail
+    assert reloaded.state.log == [entry(1, 1), entry(1, 2)]
+    reloaded.state.log.append(entry(1, 3))
+    reloaded.sync()
+    assert FileStorage(base).state.log == [entry(1, 1), entry(1, 2), entry(1, 3)]
 
 
 # ---- a real cluster over localhost TCP -----------------------------------------------------
@@ -191,6 +234,7 @@ def test_metrics_and_status_endpoints(tmp_path):
             leader = leader_of(servers)
             status = json.loads(await fetch_status(("127.0.0.1", ports[3 + leader.id])))
             assert status["role"] == "leader" and status["id"] == leader.id
+            assert status["pre_vote"] is True  # on by default in the real service
             reader, writer = await asyncio.open_connection("127.0.0.1", ports[3])
             writer.write(b"GET /metrics HTTP/1.1\r\n\r\n")
             await writer.drain()

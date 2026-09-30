@@ -34,6 +34,23 @@ class RequestVoteReply:
 
 
 @dataclass(frozen=True)
+class PreVote:
+    """Would you vote for me in `term`? Asking changes nobody's term or vote (Raft thesis 9.6)."""
+
+    term: int  # the term the candidate would start: its current term + 1
+    candidate_id: int
+    last_log_index: int
+    last_log_term: int
+
+
+@dataclass(frozen=True)
+class PreVoteReply:
+    term: int  # the proposed term when granted, otherwise the replier's current term
+    granted: bool
+    for_term: int  # which pre-vote round this answers
+
+
+@dataclass(frozen=True)
 class AppendEntries:
     term: int
     leader_id: int
@@ -68,6 +85,8 @@ class ClientResponse:
 Message = (
     RequestVote
     | RequestVoteReply
+    | PreVote
+    | PreVoteReply
     | AppendEntries
     | AppendEntriesReply
     | ClientRequest

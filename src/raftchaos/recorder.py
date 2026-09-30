@@ -16,6 +16,8 @@ from .messages import (
     ClientRequest,
     ClientResponse,
     Message,
+    PreVote,
+    PreVoteReply,
     RequestVote,
     RequestVoteReply,
 )
@@ -32,6 +34,10 @@ NOMINAL_LATENCY = 8  # ms, used to animate messages that never arrive
 
 def describe(msg: Message) -> tuple[str, object]:
     """A short type code and one detail worth showing for each message."""
+    if isinstance(msg, PreVote):
+        return "PV", msg.term
+    if isinstance(msg, PreVoteReply):
+        return "PVR", int(msg.granted)
     if isinstance(msg, RequestVote):
         return "RV", msg.term
     if isinstance(msg, RequestVoteReply):

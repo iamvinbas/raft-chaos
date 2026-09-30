@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import random
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +24,9 @@ from .storage import FileStorage
 log = logging.getLogger("raftchaos.node")
 
 TICK_S = 0.01
+# Abort a peer connection whose data goes unacknowledged this long. Without it, frames queued
+# during a partition sit in TCP retransmission backoff and arrive seconds after the network heals.
+UNACKED_TIMEOUT_MS = 1000
 QUEUE_LIMIT = 512
 MAX_FRAME = 1 << 20
 
@@ -61,8 +65,8 @@ class NodeServer:
         self.addresses = addresses
         self.listen = listen or addresses[node_id]
         self.metrics_port = metrics_port
-        self.config = config or RaftConfig()
-        self.storage = FileStorage(data_dir / f"node-{node_id}.json")
+        self.config = config or RaftConfig(pre_vote=True)  # a real service wants PreVote
+        self.storage = FileStorage(data_dir / f"node-{node_id}")
         self.counters = Counters()
         self.node: RaftNode | None = None
         self.links: dict[int, _PeerLink] = {}
@@ -170,6 +174,7 @@ class NodeServer:
                 self._discard(link)
                 await asyncio.sleep(0.2)
                 continue
+            _bound_unacked_time(writer)
             try:
                 while True:
                     writer.write(await link.queue.get())
@@ -236,6 +241,7 @@ class NodeServer:
             "commit_index": node.commit_index,
             "last_applied": node.last_applied,
             "log_entries": node.last_index,
+            "pre_vote": self.config.pre_vote,
         }
 
     def prometheus(self) -> str:
@@ -283,6 +289,14 @@ class NodeServer:
             pass
         finally:
             writer.close()
+
+
+def _bound_unacked_time(writer: asyncio.StreamWriter) -> None:
+    sock = writer.get_extra_info("socket")
+    option = getattr(socket, "TCP_USER_TIMEOUT", None)  # Linux only
+    if sock is not None and option is not None:
+        with contextlib.suppress(OSError):
+            sock.setsockopt(socket.IPPROTO_TCP, option, UNACKED_TIMEOUT_MS)
 
 
 async def serve_forever(server: NodeServer) -> None:

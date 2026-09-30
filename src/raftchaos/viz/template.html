@@ -164,7 +164,7 @@ footer { padding: 4px 16px 14px; color: var(--dim); font-size: 12px; }
         <span><i class="sw" style="background:var(--follower)"></i>follower</span>
         <span><i class="sw" style="background:var(--candidate)"></i>candidate</span>
         <span><i class="sw" style="background:var(--down)"></i>crashed</span>
-        <span><i class="swd" style="background:var(--vote)"></i>vote request / reply</span>
+        <span><i class="swd" style="background:var(--vote)"></i>vote / pre-vote</span>
         <span><i class="swd" style="background:var(--append)"></i>log entries</span>
         <span><i class="swd" style="background:#56657a"></i>heartbeat / ack</span>
         <span><i class="swd" style="background:var(--client)"></i>client request</span>
@@ -400,6 +400,8 @@ function drawLinks(net) {
 
 function msgStyle(m) {
   switch (m[3]) {
+    case "PV": return { c: C.vote, r: 3.8, label: "would you vote?", pre: true };
+    case "PVR": return m[4] ? { c: C.vote, r: 3.2, label: "would", pre: true } : { c: C.muted, r: 3.2, label: "leader alive", pre: true };
     case "RV": return { c: C.vote, r: 4.6, label: "vote for me?" };
     case "RVR": return m[4] ? { c: C.vote, r: 3.6, label: "yes" } : { c: C.muted, r: 3.2, label: "no" };
     case "AE": return m[4] > 0 ? { c: C.append, r: 4.6, label: m[4] > 1 ? `+${m[4]} entries` : "+1 entry" } : { c: C.heart, r: 2.5, hb: true };
@@ -445,7 +447,9 @@ function drawMessages() {
       const tq = Math.max(0, q - 0.12);
       ctx.beginPath(); ctx.moveTo(s.x + dx * tq + ox, s.y + dy * tq + oy); ctx.lineTo(x, y); ctx.stroke();
       ctx.globalAlpha = 1; ctx.fillStyle = st.c;
-      ctx.beginPath(); ctx.arc(x, y, st.r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y, st.r, 0, Math.PI * 2);
+      if (st.pre) { ctx.fillStyle = C.panel; ctx.fill(); ctx.strokeStyle = st.c; ctx.lineWidth = 1.8; ctx.stroke(); }
+      else ctx.fill();
       if (showLabels && st.label && !st.hb && q > 0.08 && q < 0.92 && free(x, y)) {
         placed.push({ x, y });
         ctx.font = font(10.5, 500, true); ctx.fillStyle = st.c; ctx.globalAlpha = 0.9;
@@ -852,7 +856,8 @@ function selectScenario(idx, autoplay, keepHash = false) {
 DATA.scenarios.forEach((sc, idx) => {
   const c = document.createElement("button");
   c.className = "chip"; c.setAttribute("role", "tab");
-  c.innerHTML = `<span class="dot" style="background:${sc.bug ? C.bad : C.leader}"></span><span></span>`;
+  const dot = sc.bug ? C.bad : sc.key === "no-prevote" ? C.candidate : C.leader;
+  c.innerHTML = `<span class="dot" style="background:${dot}"></span><span></span>`;
   c.lastChild.textContent = sc.short || sc.title;
   c.onclick = () => selectScenario(idx, true);
   chips.appendChild(c);

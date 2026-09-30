@@ -55,6 +55,8 @@ def _config_from(args: argparse.Namespace, bug: str | None) -> SimConfig:
         config = replace(config, nemesis=False)
     if bug and bug != "none":
         config = replace(config, bugs=Bugs.only(bug))
+    if getattr(args, "pre_vote", False):
+        config = replace(config, raft=replace(config.raft, pre_vote=True))
     return config
 
 
@@ -165,6 +167,7 @@ def cmd_node(args: argparse.Namespace) -> int:
     import logging
     from pathlib import Path
 
+    from .node import RaftConfig
     from .runtime.server import NodeServer, serve_forever
 
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(name)s %(message)s")
@@ -173,7 +176,12 @@ def cmd_node(args: argparse.Namespace) -> int:
         raise SystemExit(f"--id {args.id} is not in --peers ({len(addresses)} nodes)")
     listen = ("0.0.0.0", addresses[args.id][1]) if args.listen is None else args.listen
     server = NodeServer(
-        args.id, addresses, Path(args.data_dir), listen=listen, metrics_port=args.metrics_port
+        args.id,
+        addresses,
+        Path(args.data_dir),
+        listen=listen,
+        metrics_port=args.metrics_port,
+        config=RaftConfig(pre_vote=not args.no_pre_vote),
     )
     try:
         asyncio.run(serve_forever(server))
@@ -264,6 +272,23 @@ def cmd_viz(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_experiment(args: argparse.Namespace) -> int:
+    from .experiments import HEAL_AT, ISOLATE_AT, render, run_isolation
+
+    seeds = range(args.start, args.start + args.seeds)
+    print(
+        f"one follower isolated at {ISOLATE_AT} ms, network healed at {HEAL_AT} ms, "
+        f"{args.nodes} nodes, seeds {seeds.start}-{seeds.stop - 1}"
+    )
+    summaries = [run_isolation(seeds, pv, args.nodes) for pv in (False, True)]
+    print(render(summaries))
+    print(
+        "disrupted: runs where the rejoining node forced an election on a healthy leader\n"
+        "term +: how far the isolated node raised its term while cut off"
+    )
+    return 0 if all(s.safe == s.runs for s in summaries) else 1
+
+
 def cmd_bugs(_args: argparse.Namespace) -> int:
     print("\n".join(BUG_NAMES))
     return 0
@@ -278,6 +303,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--nodes", type=int, default=3)
     run.add_argument("--bug", choices=BUG_NAMES)
     run.add_argument("--profile", choices=PROFILES, default="default")
+    run.add_argument("--pre-vote", action="store_true", help="enable the PreVote extension")
     run.add_argument("--duration", type=int, help="milliseconds of load and faults")
     run.add_argument("--trace", action="store_true", help="print nemesis actions")
     run.add_argument("--history", action="store_true", help="print the client operation history")
@@ -286,6 +312,7 @@ def build_parser() -> argparse.ArgumentParser:
     hunt_p = sub.add_parser("hunt", help="search seeds for a failing run")
     hunt_p.add_argument("--bug", choices=BUG_NAMES)
     hunt_p.add_argument("--profile", choices=PROFILES, default="default")
+    hunt_p.add_argument("--pre-vote", action="store_true", help="enable the PreVote extension")
     hunt_p.add_argument("--all", action="store_true", help="control run plus every injected bug")
     hunt_p.add_argument("--seeds", type=int, default=200, help="how many seeds to try")
     hunt_p.add_argument("--start", type=int, default=0)
@@ -298,6 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--nodes", type=int, default=3)
         p.add_argument("--bug", choices=BUG_NAMES)
         p.add_argument("--profile", choices=PROFILES, default="default")
+        p.add_argument("--pre-vote", action="store_true", help="enable the PreVote extension")
         p.add_argument("--duration", type=int, help="milliseconds of load and faults")
 
     metrics = sub.add_parser("metrics", help="print run metrics in Prometheus text format")
@@ -326,6 +354,7 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--data-dir", required=True)
     node.add_argument("--metrics-port", type=int)
     node.add_argument("--log-level", default="info")
+    node.add_argument("--no-pre-vote", action="store_true", help="disable PreVote (on by default)")
     node.set_defaults(func=cmd_node)
 
     kv = sub.add_parser("kv", help="read or write the replicated store")
@@ -356,6 +385,13 @@ def build_parser() -> argparse.ArgumentParser:
     viz.add_argument("--duration", type=int, help="milliseconds of load and faults")
     viz.add_argument("--open", action="store_true", help="open the page in a browser")
     viz.set_defaults(func=cmd_viz)
+
+    experiment = sub.add_parser("experiment", help="controlled experiments")
+    experiment.add_argument("name", choices=("prevote",))
+    experiment.add_argument("--seeds", type=int, default=50)
+    experiment.add_argument("--start", type=int, default=0)
+    experiment.add_argument("--nodes", type=int, default=3)
+    experiment.set_defaults(func=cmd_experiment)
 
     bugs = sub.add_parser("bugs", help="list injectable bugs")
     bugs.set_defaults(func=cmd_bugs)

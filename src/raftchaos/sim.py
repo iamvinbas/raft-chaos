@@ -36,6 +36,9 @@ class SimConfig:
     client_timeout: int = 400
     keys: tuple[str, ...] = ("x", "y")
     nemesis: bool = True
+    # Faults at fixed times, e.g. ((1500, "isolate_follower"), (4500, "heal")), for experiments
+    # that need one precise situation rather than random chaos.
+    script: tuple[tuple[int, str], ...] = ()
     # Targeted faults, off by default. Each fires on an event instead of on a timer.
     crash_on_vote_prob: float = 0.0  # crash a node right after it grants a vote
     torn_broadcast_prob: float = 0.0  # leader crashes after its append reaches only one peer
@@ -125,6 +128,8 @@ class Simulator:
             self._boot(i)
             self.schedule(self.rng.randint(0, self.config.tick_ms), "tick", i)
         self.workload.start()
+        for at, action in self.config.script:
+            self.schedule(at, "script", action)
         if self.config.nemesis:
             self.schedule(self.nemesis_rng.randint(200, 600), "nemesis")
 
@@ -245,6 +250,29 @@ class Simulator:
                 )
                 self._crash(node_id, quick=True)
 
+    def _run_script(self, action: str) -> None:
+        if action == "isolate_follower":
+            leader = self.leader()
+            followers = [n.id for n in self.live_nodes() if leader is None or n.id != leader.id]
+            if followers:
+                target = followers[0]
+                self.groups = {n: (1 if n == target else 0) for n in self.ids}
+                self.stats["partitions"] += 1
+                self._mark(
+                    "partition", f"partition [{target}] | {[n for n in self.ids if n != target]}"
+                )
+        elif action == "isolate_leader":
+            leader = self.leader()
+            if leader is not None:
+                self.groups = {n: (1 if n == leader.id else 0) for n in self.ids}
+                self.stats["partitions"] += 1
+                self._mark("isolate", f"isolate leader {leader.id}", leader.id)
+        elif action == "heal":
+            self.groups = None
+            self._mark("heal", "heal network")
+        else:
+            raise ValueError(f"unknown script action {action!r}")
+
     def _nemesis(self) -> None:
         rng = self.nemesis_rng
         action = rng.choices(
@@ -322,6 +350,8 @@ class Simulator:
             if self.nodes[node_id] is None:
                 self._mark("restart", f"restart node {node_id}", node_id)
                 self._boot(node_id)
+        elif kind == "script":
+            self._run_script(*args)
         elif kind == "nemesis":
             if self.workload.active:
                 self._nemesis()

@@ -18,6 +18,8 @@ from ..messages import (
     ClientResponse,
     LogEntry,
     Message,
+    PreVote,
+    PreVoteReply,
     RequestVote,
     RequestVoteReply,
 )
@@ -27,6 +29,8 @@ _TYPES: dict[str, type[Any]] = {
     for cls in (
         RequestVote,
         RequestVoteReply,
+        PreVote,
+        PreVoteReply,
         AppendEntries,
         AppendEntriesReply,
         ClientRequest,
