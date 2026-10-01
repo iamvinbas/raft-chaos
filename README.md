@@ -1,6 +1,6 @@
 <div align="center">
 
-# raft-chaos
+<h1><img src="docs/img/logo.svg" alt="" width="64" align="center"> raft-chaos</h1>
 
 **Raft consensus in pure Python, broken on purpose by a deterministic chaos simulator.**
 
