@@ -13,6 +13,11 @@
 [![Runtime deps: 0](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](pyproject.toml)
 [![mypy: strict](https://img.shields.io/badge/mypy-strict-informational.svg)](pyproject.toml)
 
+<img src="docs/img/demo.gif" alt="The visualiser replaying the planted double_vote bug: a leader is partitioned away, node 1 crashes, then nodes 0 and 2 both become leader of term 11 and playback stops on the Election Safety violation" width="100%">
+
+<sub>Planted bug <code>double_vote</code>: a partition, a crash, then two leaders of term 11. Playback
+stops on the broken invariant, with the command that replays it.</sub>
+
 </div>
 
 `raft-chaos` implements Raft leader election and log replication for a replicated
@@ -41,15 +46,6 @@ the exact same failure, every time.
   the event that breaks an invariant.
 - **Observability:** Prometheus metrics, SLO error budgets, anomaly detection and SVG timelines.
 - Standard library only at runtime, strict `mypy`, CI on Python 3.10 and 3.12.
-
-<div align="center">
-
-<img src="docs/img/visualiser.png" alt="The raft-chaos visualiser: three Raft servers, one partitioned away and stuck as a candidate while the other two elect a leader" width="100%">
-
-<sub>The visualiser replaying a correct cluster under chaos. Node 0 is partitioned away and keeps
-starting elections (term 9) while nodes 1 and 2 elect a leader and keep committing.</sub>
-
-</div>
 
 ## Watch it fail
 
