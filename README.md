@@ -84,8 +84,9 @@ What you see:
 ### Live mode: break a real cluster from the browser
 
 The same page can watch the Docker cluster in real time and break it with buttons: `kill -9` a
-node or the leader, cut one off with `iptables`, slow one down with `tc netem`, heal. It also runs a
-client load and, on demand, checks that load's history for linearizability.
+node or the leader, bring killed nodes back (Revive, Revive all), cut one off with `iptables`, slow
+one down with `tc netem`, heal. Each button is enabled only when it applies. It also runs a client
+load on keys of its own and, on demand, checks that load's history for linearizability.
 
 ```bash
 docker compose up -d --build

@@ -58,8 +58,15 @@ def test_bridge_serves_live_state_and_refuses_foreign_requests(tmp_path):
                 port, "POST", "/api/action", token=token, body={"action": "kill_leader"}
             )
             assert "disabled" in json.loads(raw)["result"]
+            _, raw = await http(
+                port, "POST", "/api/action", token=token, body={"action": "revive_all"}
+            )
+            assert "disabled" in json.loads(raw)["result"]
             await http(port, "POST", "/api/action", token=token, body={"action": "load_start"})
             await wait_for(lambda: bridge.work.ok > 20)
+            # the load writes keys of its own, so other writers cannot cause a false alarm
+            assert bridge.work.keys != ("x", "y")
+            assert {op.key for op in bridge.work.history} <= set(bridge.work.keys)
             await http(port, "POST", "/api/action", token=token, body={"action": "load_stop"})
             await http(port, "POST", "/api/action", token=token, body={"action": "check"})
             await wait_for(lambda: bridge.check["status"] in ("ok", "violation"))
