@@ -83,6 +83,19 @@ class FileStorage:
             _fsync_dir(self.log_path.parent)
         self.state.log = list(self._persisted)
 
+    def is_empty(self) -> bool:
+        """True for a node that has never stored anything."""
+        state = self.state
+        return state.snapshot is None and not state.log and state.current_term == 0
+
+    def seed(self, snapshot: Snapshot) -> None:
+        """Start an empty node from a backup: the snapshot becomes its whole history."""
+        if not self.is_empty():
+            raise ValueError("refusing to restore over existing data")
+        self.state.snapshot = snapshot
+        self.state.current_term = snapshot.last_term
+        self.sync()
+
     def _base(self) -> int:
         return self.state.snapshot.last_index if self.state.snapshot else 0
 

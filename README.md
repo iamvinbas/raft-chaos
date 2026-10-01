@@ -57,7 +57,7 @@ starting elections (term 9) while nodes 1 and 2 elect a leader and keep committi
 `raftchaos viz` turns any run into an interactive page: one HTML file, no server, no build step.
 
 ```bash
-raftchaos viz --out viz.html --open                              # the nine demo scenes
+raftchaos viz --out viz.html --open                              # the six demo scenes
 raftchaos viz --seed 4 --bug forget_vote_on_restart --profile adversarial --out run.html --open
 ```
 
@@ -302,6 +302,22 @@ about, each fixed and remeasured:
 
 Details, and the PreVote experiment over 50 seeds: [docs/real-cluster.md](docs/real-cluster.md#findings-from-the-real-cluster).
 
+**Backups.** Crashes are already covered: every node fsyncs before replying, and committed data
+also lives on a majority. Losing the whole cluster is not, for example `docker compose down -v`.
+For that there is a backup, like `etcdctl snapshot save`:
+
+```bash
+raftchaos backup save --metrics 127.0.0.1:9100,127.0.0.1:9101,127.0.0.1:9102 --out backup.json
+raftchaos backup show backup.json
+# every node gone: start a new cluster, giving each node the same backup
+raftchaos node --id 0 --peers $PEERS --data-dir /tmp/new --restore backup.json   # and so on
+```
+
+The backup is the committed state of the most up-to-date reachable node. Each restored node starts
+from it as from a snapshot, so the new cluster agrees on that history from its first election.
+Restoring over a node that already has data is refused. Tested end to end, with the data wiped in
+between: see [docs/real-cluster.md](docs/real-cluster.md#backup-and-restore).
+
 Snapshots are on by default in `raftchaos node` (every 1000 entries). With one follower down while
 three clients wrote for 90 seconds (about 9,600 entries), then restarted:
 
@@ -468,7 +484,7 @@ raft-chaos/
 │   ├── recorder.py        # opt-in recording of a run for replay
 │   ├── experiments.py     # scripted-fault experiments (PreVote)
 │   ├── viz/               # the web visualiser: template + builder
-│   ├── runtime/           # the same node over real TCP: server, client, storage, verify
+│   ├── runtime/           # the same node over real TCP: server, client, storage, backup, verify
 │   ├── live/              # bridge between the browser and a running cluster
 │   └── cli.py             # run, hunt, viz, experiment, metrics, slo, anomalies, …
 ├── tests/                 # simulation, linearizability and observability tests

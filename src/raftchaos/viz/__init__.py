@@ -49,16 +49,6 @@ DEMO_SCENARIOS: tuple[Scenario, ...] = (
         "double_vote",
     ),
     Scenario(
-        "forget-vote",
-        "Bug: forgotten vote",
-        "Planted bug: a restarted server forgets its vote",
-        "The vote is not saved to disk. The adversarial profile crashes a server right after it "
-        "votes; when it comes back it votes again, for someone else, in the same term.",
-        4,
-        "forget_vote_on_restart",
-        "adversarial",
-    ),
-    Scenario(
         "figure-8",
         "Bug: Figure 8",
         "Planted bug: committing an old term's entry (Raft paper, Figure 8)",
@@ -98,25 +88,6 @@ DEMO_SCENARIOS: tuple[Scenario, ...] = (
         "(purple) and the follower continues from there.",
         0,
         experiment="isolation+prevote+snapshots",
-    ),
-    Scenario(
-        "snapshot-bug",
-        "Bug: snapshot wipes log",
-        "Planted bug: installing a snapshot wipes newer entries",
-        "A follower that receives a snapshot throws away its whole log, even entries past the "
-        "snapshot that it had already acknowledged to the leader. Those acknowledgements helped "
-        "commit entries that now exist on too few servers.",
-        1121,
-        "install_snapshot_discards_log",
-    ),
-    Scenario(
-        "stale-log",
-        "Bug: stale log vote",
-        "Planted bug: voting for a candidate with a stale log",
-        "Servers stop checking that a candidate's log is up to date before voting, so a server "
-        "that missed committed entries can become leader.",
-        0,
-        "stale_log_vote",
     ),
 )
 
