@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..messages import Addr, ClientRequest, Message, Outbox
 from ..node import RaftConfig, RaftNode, Role
+from .backup import backup_to_json
 from .codec import decode, encode
 from .storage import FileStorage
 
@@ -265,6 +266,14 @@ class NodeServer:
             },
         }
 
+    def backup(self) -> dict[str, object]:
+        """The applied, hence committed, state of this node, ready to be written to a file."""
+        node = self.node
+        assert node is not None
+        index = node.last_applied
+        snapshot = node.kv.to_snapshot(index, node.term_at(index))
+        return backup_to_json(snapshot, self.id)
+
     def prometheus(self) -> str:
         s = self.status()
         c = self.counters
@@ -300,6 +309,8 @@ class NodeServer:
                 body, kind, code = self.prometheus(), "text/plain; version=0.0.4", "200 OK"
             elif path == "/status":
                 body, kind, code = json.dumps(self.status()) + "\n", "application/json", "200 OK"
+            elif path == "/backup":
+                body, kind, code = json.dumps(self.backup()) + "\n", "application/json", "200 OK"
             else:
                 body, kind, code = "not found\n", "text/plain", "404 Not Found"
             data = body.encode()

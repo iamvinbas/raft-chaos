@@ -125,4 +125,38 @@ The Docker chaos demo passes with snapshots on as well: 3,981 operations, linear
 nodes at commit 3,986 with snapshots at 3,000 to 3,089. Node 0's volume held a 184-byte snapshot
 and a log of the 986 entries after it, instead of all 3,986.
 
+## Backup and restore
+
+`raftchaos backup save` asks every node for its status, picks the one that has applied the most
+entries, and writes its committed state (data, client sessions, last index and term) to a file. A
+new cluster starts from it with `--restore` on every node; a node that already has data refuses.
+
+A run on three local processes, from the terminal:
+
+```console
+$ raftchaos kv --nodes $PEERS put alice balance-alice      # and bob, carol
+$ raftchaos backup save --metrics $METRICS --out backup.json
+wrote backup.json: backup of node 0 taken 2026-10-01T08:21:24Z: 3 keys, 3 client sessions, history up to index 4 (term 1)
+
+# kill -9 every node, then delete every data file
+
+$ raftchaos node --id 0 --peers $PEERS --data-dir data2 --restore backup.json ...   # nodes 1 and 2 too
+$ raftchaos kv --nodes $PEERS get alice
+balance-alice
+$ raftchaos kv --nodes $PEERS put dave balance-dave
+OK
+$ raftchaos status --metrics $METRICS
+{"id": 1, "role": "leader", "term": 2, "leader": 1, "commit_index": 10, ...}
+
+$ raftchaos node --id 0 ... --data-dir data2 --restore backup.json
+node 0: refusing to restore over existing data in data2
+```
+
+Every node must be started from the same backup. A node restored alone next to empty ones would
+disagree with them about the history, which is why restoring is all or nothing per cluster. The
+Docker Compose file does not wire `--restore` in; the tested path is the one above.
+
+The `/backup` endpoint, like the rest of the metrics port, has no authentication: anyone who can
+reach it can read the data, as they could through the client port.
+
 > The node ports have no authentication or TLS, so this is a demo, not a deployment.

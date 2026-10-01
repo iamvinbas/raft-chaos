@@ -182,6 +182,12 @@ def cmd_node(args: argparse.Namespace) -> int:
     if args.id not in addresses:
         raise SystemExit(f"--id {args.id} is not in --peers ({len(addresses)} nodes)")
     listen = ("0.0.0.0", addresses[args.id][1]) if args.listen is None else args.listen
+    restore = None
+    if args.restore:
+        from .runtime.backup import describe, load_backup
+
+        restore, raw = load_backup(Path(args.restore))
+        print(f"restoring from {describe(raw)}", flush=True)
     server = NodeServer(
         args.id,
         addresses,
@@ -190,6 +196,11 @@ def cmd_node(args: argparse.Namespace) -> int:
         metrics_port=args.metrics_port,
         config=RaftConfig(pre_vote=not args.no_pre_vote, snapshot_every=args.snapshot_every),
     )
+    if restore is not None:
+        try:
+            server.storage.seed(restore)
+        except ValueError as exc:
+            raise SystemExit(f"node {args.id}: {exc} in {args.data_dir}") from exc
     try:
         asyncio.run(serve_forever(server))
     except KeyboardInterrupt:
@@ -323,6 +334,34 @@ def cmd_live(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backup(args: argparse.Namespace) -> int:
+    import asyncio
+    import json
+    from pathlib import Path
+
+    from .runtime.backup import describe, fetch_backup, load_backup
+
+    if args.action == "save":
+        if not args.metrics or not args.out:
+            raise SystemExit("backup save needs --metrics and --out")
+        try:
+            raw = asyncio.run(fetch_backup(args.metrics))
+        except ConnectionError as exc:
+            print(f"backup failed: {exc}")
+            return 1
+        out = Path(args.out)
+        tmp = out.with_name(out.name + ".tmp")
+        tmp.write_text(json.dumps(raw, indent=1) + "\n", encoding="utf-8")
+        tmp.replace(out)  # never leave a half-written backup behind
+        print(f"wrote {out}: {describe(raw)}")
+        return 0
+    if not args.file:
+        raise SystemExit("backup show needs a file")
+    _, raw = load_backup(Path(args.file))
+    print(describe(raw))
+    return 0
+
+
 def cmd_bugs(_args: argparse.Namespace) -> int:
     print("\n".join(BUG_NAMES))
     return 0
@@ -395,6 +434,11 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--log-level", default="info")
     node.add_argument("--no-pre-vote", action="store_true", help="disable PreVote (on by default)")
     node.add_argument(
+        "--restore",
+        metavar="BACKUP",
+        help="start this empty node from a backup file (give every node the same file)",
+    )
+    node.add_argument(
         "--snapshot-every",
         type=int,
         default=1000,
@@ -456,6 +500,13 @@ def build_parser() -> argparse.ArgumentParser:
     experiment.add_argument("--start", type=int, default=0)
     experiment.add_argument("--nodes", type=int, default=3)
     experiment.set_defaults(func=cmd_experiment)
+
+    backup = sub.add_parser("backup", help="save a running cluster's data to a file, or show one")
+    backup.add_argument("action", choices=("save", "show"))
+    backup.add_argument("file", nargs="?", help="backup file to show")
+    backup.add_argument("--metrics", type=_parse_nodes, help="metrics host:port of the nodes")
+    backup.add_argument("--out", help="where to write the backup")
+    backup.set_defaults(func=cmd_backup)
 
     bugs = sub.add_parser("bugs", help="list injectable bugs")
     bugs.set_defaults(func=cmd_bugs)
