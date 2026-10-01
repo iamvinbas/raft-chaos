@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="raft-chaos logo: a raft of three logs on a rough sea under a lightning bolt">
+  <title>raft-chaos</title>
+  <!-- lightning: the chaos -->
+  <path d="M30 4 L16 30 L26 30 L18 50 L40 22 L29 22 L36 4 Z" fill="#f2b33d" stroke="#b97a12" stroke-width="2" stroke-linejoin="round"/>
+  <!-- back wave -->
+  <path d="M4 92 C 16 84, 28 84, 40 92 S 64 100, 76 92 S 100 84, 112 92 S 122 96, 124 94" fill="none" stroke="#5aa9f0" stroke-width="5" stroke-linecap="round" opacity="0.6"/>
+  <g transform="rotate(-8 64 76)">
+    <!-- mast and flag: the leader -->
+    <line x1="64" y1="58" x2="64" y2="14" stroke="#7a4b22" stroke-width="4" stroke-linecap="round"/>
+    <path d="M66 15 L96 24 L66 34 Z" fill="#3fb950" stroke="#238636" stroke-width="2" stroke-linejoin="round"/>
+    <!-- deck plank -->
+    <rect x="20" y="54" width="88" height="8" rx="3" fill="#a86d36" stroke="#6e4420" stroke-width="2"/>
+    <!-- three logs seen end-on: the three nodes -->
+    <g stroke="#6e4420" stroke-width="2.5">
+      <circle cx="35" cy="76" r="14" fill="#d9a066"/>
+      <circle cx="64" cy="76" r="14" fill="#d9a066"/>
+      <circle cx="93" cy="76" r="14" fill="#d9a066"/>
+    </g>
+    <g fill="none" stroke="#a86d36" stroke-width="2">
+      <circle cx="35" cy="76" r="8"/><circle cx="35" cy="76" r="3"/>
+      <circle cx="64" cy="76" r="8"/><circle cx="64" cy="76" r="3"/>
+      <circle cx="93" cy="76" r="8"/><circle cx="93" cy="76" r="3"/>
+    </g>
+  </g>
+  <!-- sea: the front wave covers the bottom of the logs -->
+  <path d="M2 96 C 14 86, 28 86, 40 94 S 64 104, 78 94 S 104 86, 116 94 S 124 98, 126 96 L 126 112 Q 126 124 114 124 L 14 124 Q 2 124 2 112 Z" fill="#2f81f7"/>
+  <path d="M12 110 C 24 104, 36 104, 48 110 S 72 116, 84 110 S 106 104, 116 110" fill="none" stroke="#9ecbff" stroke-width="3.5" stroke-linecap="round" opacity="0.8"/>
+</svg>
