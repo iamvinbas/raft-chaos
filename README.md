@@ -4,7 +4,8 @@
 
 **Raft consensus in pure Python, broken on purpose by a deterministic chaos simulator.**
 
-**[▶ Watch it fail in your browser](https://iamvinbas.github.io/raft-chaos/viz/)**
+**[▶ Watch it fail in your browser](https://iamvinbas.github.io/raft-chaos/viz/)** ·
+**[Step-by-step guide](docs/guide.md)**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/iamvinbas/raft-chaos/ci.yml?branch=master&label=CI)](https://github.com/iamvinbas/raft-chaos/actions)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -102,6 +103,9 @@ keep committing at 136 operations per second.</sub>
 
 </div>
 
+When you are done: `Ctrl+C` stops live mode, `docker compose stop` pauses the cluster (resume
+with `docker compose start`), and `docker compose down -v` removes it with all its data.
+
 Node state is exact; the dots are drawn from per-link frame counters, so they show real traffic
 volume rather than single messages. The bridge binds to 127.0.0.1, rejects foreign `Host` headers
 and requires a per-run token on every call, so another website cannot drive your Docker.
@@ -144,6 +148,10 @@ This project treats reliability as something you can test:
 - **Prove the tester works** by re-introducing classic Raft bugs and confirming they get caught.
 
 ## Quickstart
+
+New to the project? The [hands-on guide](docs/guide.md) walks through everything below step by
+step: what to type, what you should see, what each live-mode button does, and how to stop and
+clean up.
 
 ```bash
 git clone https://github.com/iamvinbas/raft-chaos.git
@@ -489,6 +497,7 @@ raft-chaos/
 │   ├── live/              # bridge between the browser and a running cluster
 │   └── cli.py             # run, hunt, viz, experiment, metrics, slo, anomalies, …
 ├── tests/                 # simulation, linearizability and observability tests
+├── docs/guide.md          # hands-on guide, step by step
 ├── docs/design.md         # invariants and design decisions
 ├── docs/observability.md  # metrics, SLOs, anomaly detection, timelines
 ├── docs/real-cluster.md   # running and breaking a real cluster
