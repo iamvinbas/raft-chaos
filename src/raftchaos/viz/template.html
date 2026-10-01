@@ -179,6 +179,9 @@ body.no-faults #watch-only { display: block; }
       <div class="ctl-grid" id="node-ctl"></div>
       <div class="ctl-row fault-row">
         <button class="btn danger" data-act="kill_leader">Kill the leader</button>
+        <button class="btn" data-act="revive_all">Revive all</button>
+      </div>
+      <div class="ctl-row fault-row">
         <button class="btn" data-act="heal">Heal network</button>
       </div>
       <div class="ctl-row">
@@ -952,9 +955,10 @@ function startLive() {
   for (let i = 0; i < n; i++) {
     const who = document.createElement("span"); who.className = "who"; who.textContent = `node ${i}`;
     grid.appendChild(who);
-    for (const [act, label, cls] of [["kill", "Kill", "danger"], ["restart", "Restart", ""], ["isolate", "Isolate", ""], ["slow", "Slow", ""]]) {
+    for (const [act, label, cls] of [["kill", "Kill", "danger"], ["restart", "Revive", ""], ["isolate", "Isolate", ""], ["slow", "Slow", ""]]) {
       const b = document.createElement("button");
       b.className = `btn sm ${cls}`; b.textContent = label; b.dataset.act = act; b.dataset.node = String(i);
+      b.title = act === "restart" ? "Start this node again from its volume (the inverse of Kill)" : "";
       grid.appendChild(b);
     }
   }
@@ -964,20 +968,38 @@ function startLive() {
   poll();
 }
 
+// Offer only the actions that make sense right now: Kill a live node, Revive a dead one.
+let actionPending = false;
+function refreshButtons() {
+  if (!lastSnap) return;
+  const s = lastSnap;
+  const down = s.nodes.filter((n) => !n.up).length;
+  const leader = s.nodes.some((n) => n.up && n.role === "leader");
+  document.querySelectorAll("#live-panel button[data-act]").forEach((b) => {
+    let enabled = true;
+    const node = b.dataset.node !== undefined ? s.nodes[+b.dataset.node] : null;
+    if (node) enabled = b.dataset.act === "restart" ? !node.up : node.up;
+    else if (b.dataset.act === "kill_leader") enabled = leader;
+    else if (b.dataset.act === "revive_all") enabled = down > 0;
+    else if (b.dataset.act === "heal") enabled = s.isolated.length + s.slow.length > 0;
+    b.disabled = actionPending || !enabled;
+  });
+}
+
 async function act(button) {
   let action = button.dataset.act;
   if (action === "load_start" && lastSnap && lastSnap.load.running) action = "load_stop";
   const body = { action };
   if (button.dataset.node !== undefined) body.node = +button.dataset.node;
-  const buttons = document.querySelectorAll("#live-panel button");
-  buttons.forEach((b) => (b.disabled = true));
+  actionPending = true;
+  refreshButtons();
   $("live-msg").textContent = "running…";
   try {
     const r = await fetch("/api/action", { method: "POST", headers: { "Content-Type": "application/json", "X-Token": LIVE.token }, body: JSON.stringify(body) });
     const out = await r.json();
     $("live-msg").textContent = out.result === "ok" ? "" : out.result;
   } catch (e) { $("live-msg").textContent = "the bridge did not answer"; }
-  finally { buttons.forEach((b) => (b.disabled = false)); }
+  finally { actionPending = false; refreshButtons(); }
 }
 
 function addEvent(time, text, color, minor = false, violation = false) {
@@ -1040,6 +1062,7 @@ function ingest(raw) {
   if (prev && status !== lastCheck && (status === "ok" || status === "violation")) showCheck(s.check);
   lastCheck = status;
   $("load-btn").textContent = s.load.running ? "Stop load" : "Start load";
+  refreshButtons();
   if (!prev && !s.faults_enabled) {
     $("about").innerHTML = "<b>Live cluster, watch only.</b> Each server is a real process, polled every 100 ms. " +
       "This bridge was started without fault injection: break the cluster by hand, for example " +

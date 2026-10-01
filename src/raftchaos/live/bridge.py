@@ -44,6 +44,10 @@ class Workload:
     recent: list[tuple[float, int]] = field(default_factory=list)  # (finished at, latency ms)
     tasks: list[asyncio.Task[None]] = field(default_factory=list)
     next_id: int = 0
+    # Each load session writes its own keys. The history check only knows this session's
+    # operations, so a write from anyone else to the same keys (an earlier bridge, a kv command)
+    # would look like a value from nowhere and raise a false alarm.
+    keys: tuple[str, ...] = ("x", "y")
 
 
 class Bridge:
@@ -136,7 +140,7 @@ class Bridge:
         t0 = self.started
         while self.work.running:
             self.work.next_id += 1
-            op_id, key, is_put = self.work.next_id, rng.choice("xy"), rng.random() < 0.6
+            op_id, key, is_put = self.work.next_id, rng.choice(self.work.keys), rng.random() < 0.6
             begin = time.monotonic()
             invoke = int((begin - t0) * 1000)
             try:
@@ -165,11 +169,16 @@ class Bridge:
         if self.work.running:
             return
         self.work.running = True
+        session = secrets.token_hex(2)
+        self.work.keys = (f"x-{session}", f"y-{session}")
         self.work.history.clear()
         self.work.ok = self.work.unknown = 0
         self.check = {"status": "idle"}
         self.work.tasks = [asyncio.create_task(self._client(w)) for w in range(self.work.clients)]
-        self.event("load", f"load started: {self.work.clients} clients writing and reading")
+        self.event(
+            "load",
+            f"load started: {self.work.clients} clients on keys {', '.join(self.work.keys)}",
+        )
 
     async def stop_load(self) -> None:
         self.work.running = False
@@ -214,6 +223,21 @@ class Bridge:
             if node is None:
                 return "no leader to kill right now"
             action = "kill"
+        if action == "revive_all":
+            down = [n["id"] for n in self.nodes if not n.get("up")]
+            if not down:
+                return "every node is already up"
+            self.busy = True
+            try:
+                code, out = await self._compose("start", *(f"node{i}" for i in down))
+            finally:
+                self.busy = False
+            if code != 0:
+                self.event("error", f"revive failed: {out.splitlines()[-1] if out else code}")
+                return out or f"exit {code}"
+            names = ", ".join(str(i) for i in down)
+            self.event("restart", f"node{'s' if len(down) > 1 else ''} {names} revived from disk")
+            return "ok"
         if action != "heal" and (node is None or not 0 <= node < self.n):
             return "unknown node"
         target = -1 if node is None else node  # -1 only for "heal", which targets no node
@@ -229,7 +253,7 @@ class Bridge:
             elif action == "restart":
                 code, out = await self._compose("start", service)
                 if code == 0:
-                    self.event("restart", f"node {node} restarts from its volume", node)
+                    self.event("restart", f"node {node} revived from its volume", node)
             elif action == "isolate":
                 # Drop Raft traffic by port, not by peer address: it works even when a peer is
                 # down and its name does not resolve, and it applies as one step or not at all.
